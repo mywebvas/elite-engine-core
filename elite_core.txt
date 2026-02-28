@@ -1,13 +1,12 @@
 <?php
 /**
- * ELITE SENDER v6.0 - THE CLOUD CORE (TITANIUM EDITION)
+ * ELITE SENDER v7.0 - THE APEX CORE
  * ----------------------------------------------------------------
- * BACKEND: High-Performance WAL, Micro-Batching, OTA Ready.
- * FRONTEND: Platinum UI/UX + Aggressive Freemium Upsell Engine.
+ * ARCHITECTURE: High-Performance WAL, Micro-Batching, OTA Ready.
+ * MARKETING: 7-Pillar Freemium Upsell Engine & Cryptographic Locking.
  * ----------------------------------------------------------------
  */
 
-// --- 0. SYSTEM DOCTOR ---
 $errors = [];
 if (version_compare(PHP_VERSION, '7.4.0', '<')) $errors[] = "PHP 7.4+ Required";
 if (!extension_loaded('sqlite3')) $errors[] = "SQLite3 Missing";
@@ -20,8 +19,6 @@ ini_set('display_errors', 0);
 ini_set('max_execution_time', 0);
 ini_set('memory_limit', '512M');
 
-// --- 1. SECURITY & LICENSING KERNEL ---
-
 header("X-Frame-Options: DENY");
 header("X-XSS-Protection: 1; mode=block");
 header("X-Content-Type-Options: nosniff");
@@ -31,17 +28,12 @@ class License {
     public static function check($db) {
         $key = $db->querySingle("SELECT value FROM config WHERE key='license_key'");
         $expiry = $db->querySingle("SELECT value FROM config WHERE key='license_expiry'");
-        
-        // Local Cache
         if ($key && $expiry && time() < $expiry) return true;
-        
-        // Phone Home
         if ($key) {
             $url = "https://tools.mywebvas.com/verify.php?action=check&key=" . urlencode($key) . "&domain=" . urlencode($_SERVER['HTTP_HOST']);
             $ctx = stream_context_create(['http' => ['timeout' => 5]]);
             $resp = @file_get_contents($url, false, $ctx);
             $data = json_decode($resp, true);
-            
             if ($data && $data['valid']) {
                 $db->exec("INSERT OR REPLACE INTO config (key, value) VALUES ('license_expiry', '{$data['expiry']}')");
                 $db->exec("INSERT OR REPLACE INTO config (key, value) VALUES ('license_plan', '{$data['plan']}')");
@@ -65,9 +57,7 @@ class Firewall {
         $stmt = $this->db->prepare("SELECT * FROM firewall WHERE ip = :ip");
         $stmt->bindValue(':ip', $_SERVER['REMOTE_ADDR']);
         $row = $stmt->execute()->fetchArray(SQLITE3_ASSOC);
-        if ($row && $row['locked_until'] > time()) {
-            http_response_code(429); die(json_encode(['status' => 'error', 'msg' => "Security Lockout. Wait " . ceil(($row['locked_until'] - time()) / 60) . "m."]));
-        }
+        if ($row && $row['locked_until'] > time()) { http_response_code(429); die(json_encode(['status'=>'error', 'msg'=>"Security Lockout."])); }
     }
     public function checkApiLimit() {
         $ip = $_SERVER['REMOTE_ADDR']; $now = time();
@@ -87,18 +77,13 @@ class Firewall {
         $upd->bindValue(':ip', $ip); $upd->bindValue(':fails', $fails); $upd->bindValue(':lock', $lock); $upd->execute();
         return $lock > 0;
     }
-    public function clear() { 
-        $stmt = $this->db->prepare("DELETE FROM firewall WHERE ip = :ip");
-        $stmt->bindValue(':ip', $_SERVER['REMOTE_ADDR']); $stmt->execute();
-    }
+    public function clear() { $stmt = $this->db->prepare("DELETE FROM firewall WHERE ip = :ip"); $stmt->bindValue(':ip', $_SERVER['REMOTE_ADDR']); $stmt->execute(); }
 }
 
 class CSRF {
     public static function getToken() { if (empty($_SESSION['csrf_token'])) $_SESSION['csrf_token'] = bin2hex(random_bytes(32)); return $_SESSION['csrf_token']; }
     public static function verify($token) { return isset($_SESSION['csrf_token']) && hash_equals($_SESSION['csrf_token'], $token); }
 }
-
-// --- 2. DATA CORE (HIGH PERFORMANCE WAL) ---
 
 class AppDB extends SQLite3 {
     public function __construct() {
@@ -113,7 +98,7 @@ class AppDB extends SQLite3 {
             $this->initialize();
             $this->ensureSchema(); 
             if (rand(1, 100) === 1) $this->janitor();
-        } catch (Exception $e) { http_response_code(500); die(json_encode(['status' => 'error', 'msg' => 'DB Error: ' . $e->getMessage()])); }
+        } catch (Exception $e) { http_response_code(500); die(json_encode(['status'=>'error', 'msg'=>'DB Error: ' . $e->getMessage()])); }
     }
     private function initialize() {
         if (!file_exists('.htaccess')) @file_put_contents('.htaccess', "Options -Indexes\n<FilesMatch \"\.(sqlite|log|lock|env)$\">\nOrder Deny,Allow\nDeny from all\n</FilesMatch>");
@@ -131,15 +116,11 @@ class AppDB extends SQLite3 {
         $this->exec("CREATE TABLE IF NOT EXISTS smtp_profiles (id INTEGER PRIMARY KEY AUTOINCREMENT, host TEXT, port INTEGER, user TEXT, pass TEXT, from_email TEXT, from_name TEXT, reply_to TEXT DEFAULT '', bimi_url TEXT DEFAULT '', active INTEGER DEFAULT 1, fails INTEGER DEFAULT 0, cooldown_until INTEGER DEFAULT 0)");
         $this->exec("CREATE TABLE IF NOT EXISTS login_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, ip TEXT, user_agent TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)");
         $this->exec("CREATE TABLE IF NOT EXISTS imap_config (id INTEGER PRIMARY KEY CHECK (id = 1), host TEXT, port INTEGER DEFAULT 993, user TEXT, pass TEXT)");
-        
         $cols = $this->query("PRAGMA table_info(queue)"); $hasScore = false;
         while ($row = $cols->fetchArray(SQLITE3_ASSOC)) { if ($row['name'] === 'score') $hasScore = true; }
         if (!$hasScore) $this->exec("ALTER TABLE queue ADD COLUMN score INTEGER DEFAULT 0");
     }
-    public function janitor() {
-        $this->exec("DELETE FROM login_logs WHERE timestamp < datetime('now', '-30 days')");
-        $this->exec("VACUUM");
-    }
+    public function janitor() { $this->exec("DELETE FROM login_logs WHERE timestamp < datetime('now', '-30 days')"); $this->exec("VACUUM"); }
     public function optimize() { $this->exec("VACUUM"); }
     public function getLock() {
         $lock = $this->querySingle("SELECT value FROM config WHERE key='cron_lock'");
@@ -153,8 +134,7 @@ class AppDB extends SQLite3 {
 class Security {
     private static function getKey(): string { return hex2bin(file_get_contents(__DIR__ . '/.secret')); }
     public static function encrypt(string $data): string {
-        $iv = random_bytes(12); $tag = "";
-        $cipher = openssl_encrypt($data, 'aes-256-gcm', self::getKey(), OPENSSL_RAW_DATA, $iv, $tag);
+        $iv = random_bytes(12); $tag = ""; $cipher = openssl_encrypt($data, 'aes-256-gcm', self::getKey(), OPENSSL_RAW_DATA, $iv, $tag);
         return base64_encode($iv . $tag . $cipher);
     }
     public static function decrypt(string $data): string {
@@ -165,18 +145,14 @@ class Security {
     public static function checkSession() {
         if (isset($_SESSION['last_activity']) && (time() - $_SESSION['last_activity'] > 1800)) { session_unset(); session_destroy(); return false; }
         if (isset($_SESSION['ua']) && $_SESSION['ua'] !== $_SERVER['HTTP_USER_AGENT']) { session_unset(); session_destroy(); return false; }
-        $_SESSION['last_activity'] = time();
-        return isset($_SESSION['elite_auth']) && $_SESSION['elite_auth'] === true;
+        $_SESSION['last_activity'] = time(); return isset($_SESSION['elite_auth']) && $_SESSION['elite_auth'] === true;
     }
 }
-
-// --- 3. HANDLERS ---
 
 if (isset($_GET['action'])) {
     $db = new AppDB();
     if ($_GET['action'] === 'track' && isset($_GET['id'])) {
-        $id = (int)$_GET['id'];
-        $db->exec("UPDATE queue SET read_at = CURRENT_TIMESTAMP, score = score + 1 WHERE id = $id AND read_at IS NULL");
+        $db->exec("UPDATE queue SET read_at = CURRENT_TIMESTAMP, score = score + 1 WHERE id = " . (int)$_GET['id'] . " AND read_at IS NULL");
         header("Content-Type: image/gif"); echo base64_decode("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"); exit;
     }
     if ($_GET['action'] === 'click' && isset($_GET['r'])) {
@@ -195,16 +171,13 @@ if (isset($_GET['action'])) {
         }
         echo "<!DOCTYPE html><html class='dark'><body style='background:#0F172A;color:white;font-family:sans-serif;display:flex;height:100vh;justify-content:center;align-items:center;'><div style='text-align:center;padding:40px;background:rgba(255,255,255,0.05);border-radius:20px;'><h2 style='color:#4ade80'>Unsubscribed</h2><p>$email removed.</p></div></body></html>"; exit;
     }
-    // API (PRO ONLY)
     if ($_GET['action'] === 'api') {
         if (!License::check($db)) die(json_encode(['status'=>'error','msg'=>'Pro License Required']));
         (new Firewall($db))->checkApiLimit();
-        header('Content-Type: application/json');
-        header('Access-Control-Allow-Origin: *');
+        header('Content-Type: application/json'); header('Access-Control-Allow-Origin: *');
         $token = $db->querySingle("SELECT value FROM config WHERE key = 'api_key'");
         $input = json_decode(file_get_contents('php://input'), true) ?? $_POST;
-        $inputKey = $_SERVER['HTTP_X_ELITE_KEY'] ?? $_GET['key'] ?? $input['key'] ?? '';
-        if (!hash_equals($token ?? '', $inputKey)) { http_response_code(401); die(json_encode(['status'=>'error','msg'=>'Invalid API Key'])); }
+        if (!hash_equals($token ?? '', $_SERVER['HTTP_X_ELITE_KEY'] ?? $_GET['key'] ?? $input['key'] ?? '')) { http_response_code(401); die(json_encode(['status'=>'error','msg'=>'Invalid API Key'])); }
         $email = $input['email'] ?? ''; $name = $input['name'] ?? '';
         if (!filter_var($email, FILTER_VALIDATE_EMAIL)) die(json_encode(['status'=>'error','msg'=>'Invalid Email']));
         if ($db->querySingle("SELECT 1 FROM suppressions WHERE email = '$email'")) die(json_encode(['status'=>'error','msg'=>'Suppressed']));
@@ -212,16 +185,12 @@ if (isset($_GET['action'])) {
         $stmt->bindValue(':email', $email); $stmt->bindValue(':name', $name); $stmt->execute();
         die(json_encode(['status'=>'success']));
     }
-    // CRON (HIGH PERFORMANCE MICRO-BATCHING)
     if ($_GET['action'] === 'cron') {
         $token = $db->querySingle("SELECT value FROM config WHERE key = 'cron_token'");
         if (!hash_equals($token ?? '', $_GET['token'] ?? '')) die("Invalid Token");
         if (!$db->getLock()) die("Locked");
 
-        $startTime = microtime(true);
-        $maxTime = 55;
-        $processed = 0;
-        $isPro = License::check($db);
+        $startTime = microtime(true); $maxTime = 55; $processed = 0; $isPro = License::check($db);
 
         try {
             $profiles = []; $res = $db->query("SELECT * FROM smtp_profiles WHERE active=1 AND cooldown_until < " . time());
@@ -234,19 +203,16 @@ if (isset($_GET['action'])) {
                 $queue = $db->query("SELECT * FROM queue WHERE status='pending' LIMIT 500");
                 $baseUrl = Security::getBaseUrl();
                 
-                $batchCount = 0;
-                $db->exec('BEGIN IMMEDIATE TRANSACTION');
+                $batchCount = 0; $db->exec('BEGIN IMMEDIATE TRANSACTION');
 
                 while ($row = $queue->fetchArray(SQLITE3_ASSOC)) {
                     if ((microtime(true) - $startTime) > $maxTime) break;
-
                     try {
                         $profile = $profiles[$processed % count($profiles)];
                         $smtp = new EliteSMTP($profile['host'], $profile['port']);
                         $pass = Security::decrypt($profile['pass']);
                         
-                        $finalBody = EliteSMTP::spin($rawBody);
-                        $finalSub = EliteSMTP::spin($subject);
+                        $finalBody = EliteSMTP::spin($rawBody); $finalSub = EliteSMTP::spin($subject);
                         $name = $row['name'] ?? '';
                         if (empty($name)) { $finalBody = str_replace([' {name}', '{name}'], '', $finalBody); $finalSub = str_replace('{name}', '', $finalSub); } 
                         else { $finalBody = str_replace('{name}', $name, $finalBody); $finalSub = str_replace('{name}', $name, $finalSub); }
@@ -254,12 +220,8 @@ if (isset($_GET['action'])) {
                         
                         $unsubLink = $baseUrl . "?action=unsubscribe&e=" . base64_encode($row['recipient']);
                         $finalBody = str_replace('{unsubscribe}', "<a href='$unsubLink'>Unsubscribe</a>", $finalBody);
-                        $trackUrl = $baseUrl . "?action=track&id=" . $row['id'];
-                        $finalBody .= "<img src='$trackUrl' width='1' height='1' style='display:none;' />";
-                        $finalBody = preg_replace_callback('/href="([^"]+)"/', function($m) use ($baseUrl, $row) {
-                            if (strpos($m[1], 'action=') !== false) return $m[0];
-                            return 'href="' . $baseUrl . '?action=click&id=' . $row['id'] . '&r=' . base64_encode($m[1]) . '"';
-                        }, $finalBody);
+                        $finalBody .= "<img src='{$baseUrl}?action=track&id={$row['id']}' width='1' height='1' style='display:none;' />";
+                        $finalBody = preg_replace_callback('/href="([^"]+)"/', function($m) use ($baseUrl, $row) { if (strpos($m[1], 'action=') !== false) return $m[0]; return 'href="' . $baseUrl . '?action=click&id=' . $row['id'] . '&r=' . base64_encode($m[1]) . '"'; }, $finalBody);
 
                         $sent = $smtp->send($profile['user'], $pass, $profile['from_email'], $profile['from_name'], $row['recipient'], $finalSub, $finalBody, $unsubLink, [], $profile['reply_to'], $profile['bimi_url']);
                         $status = $sent ? 'sent' : 'failed'; $log = $sent ? '250 OK' : $smtp->getLastError();
@@ -272,37 +234,18 @@ if (isset($_GET['action'])) {
                         $db->exec("UPDATE queue SET status = '$status', log = '" . SQLite3::escapeString($log) . "' WHERE id = {$row['id']}");
                         
                         $processed++; $batchCount++;
-                        
-                        // ELITE SERVER RESPECT (Micro-Batching)
-                        if ($batchCount >= 50) {
-                            $db->exec('COMMIT');
-                            usleep(50000); 
-                            gc_collect_cycles(); 
-                            $db->exec('BEGIN IMMEDIATE TRANSACTION');
-                            $batchCount = 0;
-                        }
+                        if ($batchCount >= 50) { $db->exec('COMMIT'); usleep(50000); gc_collect_cycles(); $db->exec('BEGIN IMMEDIATE TRANSACTION'); $batchCount = 0; }
                     } catch(Exception $e) {}
                 }
                 $db->exec('COMMIT');
             }
-            
-            // IMAP (PRO ONLY)
             if ($isPro && function_exists('imap_open')) {
                 $imapConf = $db->querySingle("SELECT * FROM imap_config", true);
                 if ($imapConf) {
                     $mbox = @imap_open("{{$imapConf['host']}:{$imapConf['port']}/imap/ssl}INBOX", $imapConf['user'], Security::decrypt($imapConf['pass']));
                     if ($mbox) {
-                        $emails = imap_search($mbox, 'UNSEEN SUBJECT "Undelivered Mail Returned to Sender"');
-                        if ($emails) {
-                            foreach ($emails as $msgId) {
-                                $body = imap_body($mbox, $msgId);
-                                if (preg_match('/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/', $body, $matches)) {
-                                    $db->exec("INSERT OR IGNORE INTO suppressions (email) VALUES ('{$matches[0]}')");
-                                }
-                                imap_delete($mbox, $msgId);
-                            }
-                            imap_expunge($mbox);
-                        }
+                        $emails = imap_search($mbox, 'UNSEEN SUBJECT "Undelivered Mail"');
+                        if ($emails) { foreach ($emails as $msgId) { $body = imap_body($mbox, $msgId); if (preg_match('/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/', $body, $matches)) { $db->exec("INSERT OR IGNORE INTO suppressions (email) VALUES ('{$matches[0]}')"); } imap_delete($mbox, $msgId); } imap_expunge($mbox); }
                         imap_close($mbox);
                     }
                 }
@@ -312,136 +255,91 @@ if (isset($_GET['action'])) {
     }
 }
 
-// --- 4. API CONTROLLER ---
-
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     header('Content-Type: application/json');
     try {
-        $db = new AppDB(); $fw = new Firewall($db);
-        $input = json_decode(file_get_contents('php://input'), true) ?? $_POST;
-        $action = $input['action'] ?? '';
-        $fw->checkIP();
-        $recoveryMode = file_exists(__DIR__ . '/reset.lock');
+        $db = new AppDB(); $fw = new Firewall($db); $input = json_decode(file_get_contents('php://input'), true) ?? $_POST;
+        $action = $input['action'] ?? ''; $fw->checkIP(); $recoveryMode = file_exists(__DIR__ . '/reset.lock');
         if ($recoveryMode && isset($_SESSION['elite_auth'])) { session_unset(); session_destroy(); }
-        if (!in_array($action, ['login', 'setup', 'check_auth', 'activate_license'])) {
-            if (!CSRF::verify($input['csrf'] ?? '')) { http_response_code(403); die(json_encode(['status'=>'error', 'msg'=>'CSRF Error: Refresh page'])); }
-        }
+        if (!in_array($action, ['login', 'setup', 'check_auth', 'activate_license'])) { if (!CSRF::verify($input['csrf'] ?? '')) { http_response_code(403); die(json_encode(['status'=>'error', 'msg'=>'CSRF Error'])); } }
         $isPublic = in_array($action, ['login', 'setup', 'check_auth', 'activate_license']) || ($action === 'reset_password' && $recoveryMode);
         if (!$isPublic && !Security::checkSession()) { http_response_code(401); die(json_encode(['status'=>'error', 'msg'=>'Unauthorized'])); }
-
         $isPro = License::check($db);
 
         switch ($action) {
             case 'login':
                 if (!empty($input['username'])) die(json_encode(['status'=>'error', 'msg'=>'Invalid']));
                 $stmt = $db->prepare("SELECT value FROM config WHERE key = 'app_password'");
-                $hash = (string)$stmt->execute()->fetchArray(SQLITE3_NUM)[0];
-                if ($hash && password_verify($input['password'], $hash)) {
+                if (password_verify($input['password'], (string)$stmt->execute()->fetchArray(SQLITE3_NUM)[0])) {
                     session_regenerate_id(true); $_SESSION['elite_auth'] = true; $_SESSION['ua'] = $_SERVER['HTTP_USER_AGENT']; 
                     $db->exec("INSERT INTO login_logs (ip, user_agent) VALUES ('{$_SERVER['REMOTE_ADDR']}', '{$_SERVER['HTTP_USER_AGENT']}')");
                     $fw->clear(); echo json_encode(['status' => 'success']);
-                } else { $fw->logFail(); echo json_encode(['status' => 'error', 'msg' => "Invalid Password"]); }
-                break;
+                } else { $fw->logFail(); echo json_encode(['status' => 'error', 'msg' => "Invalid Password"]); } break;
             case 'setup': case 'reset_password':
                 $stmt = $db->prepare("INSERT OR REPLACE INTO config (key, value) VALUES ('app_password', :pass)");
                 $stmt->bindValue(':pass', password_hash($input['password'], PASSWORD_BCRYPT)); $stmt->execute();
                 session_regenerate_id(true); $_SESSION['elite_auth'] = true; $_SESSION['ua'] = $_SERVER['HTTP_USER_AGENT'];
-                if (file_exists(__DIR__ . '/reset.lock')) unlink(__DIR__ . '/reset.lock');
-                echo json_encode(['status' => 'success']); break;
+                if (file_exists(__DIR__ . '/reset.lock')) unlink(__DIR__ . '/reset.lock'); echo json_encode(['status' => 'success']); break;
             case 'check_auth':
-                $hasConfig = $db->querySingle("SELECT count(*) FROM config WHERE key = 'app_password'");
-                $key = $db->querySingle("SELECT value FROM config WHERE key='license_key'");
-                $plan = $db->querySingle("SELECT value FROM config WHERE key='license_plan'");
-                echo json_encode(['status' => 'success', 'is_setup' => $hasConfig > 0, 'is_auth' => $recoveryMode ? false : Security::checkSession(), 'recovery_mode' => $recoveryMode, 'csrf' => CSRF::getToken(), 'is_pro' => $isPro, 'license_key' => $key, 'license_plan' => $plan]); break;
+                echo json_encode(['status' => 'success', 'is_setup' => $db->querySingle("SELECT count(*) FROM config WHERE key = 'app_password'") > 0, 'is_auth' => $recoveryMode ? false : Security::checkSession(), 'recovery_mode' => $recoveryMode, 'csrf' => CSRF::getToken(), 'is_pro' => $isPro, 'license_key' => $db->querySingle("SELECT value FROM config WHERE key='license_key'"), 'license_plan' => $db->querySingle("SELECT value FROM config WHERE key='license_plan'")]); break;
             case 'activate_license':
-                $key = trim($input['key']);
-                $db->exec("INSERT OR REPLACE INTO config (key, value) VALUES ('license_key', '$key')");
-                if (License::check($db)) echo json_encode(['status'=>'success']);
-                else echo json_encode(['status'=>'error', 'msg'=>'Invalid or Suspended Key']); break;
+                $db->exec("INSERT OR REPLACE INTO config (key, value) VALUES ('license_key', '" . trim($input['key']) . "')");
+                if (License::check($db)) echo json_encode(['status'=>'success']); else echo json_encode(['status'=>'error', 'msg'=>'Invalid or Suspended Key']); break;
             case 'get_config':
-                $res = $db->query("SELECT * FROM config"); $data = [];
-                while ($row = $res->fetchArray(SQLITE3_ASSOC)) { if ($row['key'] !== 'smtp_pass') $data[$row['key']] = $row['value']; }
-                $data['cron_url'] = Security::getBaseUrl() . "?action=cron&token=" . ($data['cron_token'] ?? '');
-                $data['api_url'] = Security::getBaseUrl() . "?action=api";
-                $profiles = []; $res = $db->query("SELECT id, host, port, user, from_email, from_name, reply_to, bimi_url, active, cooldown_until FROM smtp_profiles");
-                while ($row = $res->fetchArray(SQLITE3_ASSOC)) { $row['cooldown'] = $row['cooldown_until'] > time(); $profiles[] = $row; }
-                $logs = []; $res = $db->query("SELECT * FROM login_logs ORDER BY id DESC LIMIT 5");
-                while ($row = $res->fetchArray(SQLITE3_ASSOC)) $logs[] = $row;
-                $imap = $db->querySingle("SELECT host, user, port FROM imap_config", true);
-                echo json_encode(['status' => 'success', 'data' => $data, 'profiles' => $profiles, 'login_logs' => $logs, 'imap' => $imap]); break;
+                $res = $db->query("SELECT * FROM config"); $data = []; while ($row = $res->fetchArray(SQLITE3_ASSOC)) { if ($row['key'] !== 'smtp_pass') $data[$row['key']] = $row['value']; }
+                $data['cron_url'] = Security::getBaseUrl() . "?action=cron&token=" . ($data['cron_token'] ?? ''); $data['api_url'] = Security::getBaseUrl() . "?action=api";
+                $profiles = []; $res = $db->query("SELECT id, host, port, user, from_email, from_name, reply_to, bimi_url, active, cooldown_until FROM smtp_profiles"); while ($row = $res->fetchArray(SQLITE3_ASSOC)) { $row['cooldown'] = $row['cooldown_until'] > time(); $profiles[] = $row; }
+                $logs = []; $res = $db->query("SELECT * FROM login_logs ORDER BY id DESC LIMIT 5"); while ($row = $res->fetchArray(SQLITE3_ASSOC)) $logs[] = $row;
+                echo json_encode(['status' => 'success', 'data' => $data, 'profiles' => $profiles, 'login_logs' => $logs, 'imap' => $db->querySingle("SELECT host, user, port FROM imap_config", true)]); break;
             case 'add_smtp':
-                $count = $db->querySingle("SELECT COUNT(*) FROM smtp_profiles");
-                if (!$isPro && $count >= 1) { echo json_encode(['status'=>'error', 'msg'=>'Free Limit Reached: Upgrade to Pro.']); break; }
+                if (!$isPro && $db->querySingle("SELECT COUNT(*) FROM smtp_profiles") >= 1) { echo json_encode(['status'=>'error', 'msg'=>'Free Limit Reached: Upgrade to Pro.']); break; }
                 $stmt = $db->prepare("INSERT INTO smtp_profiles (host, port, user, pass, from_email, from_name, reply_to, bimi_url) VALUES (:h, :p, :u, :pass, :fe, :fn, :rt, :bimi)");
-                $stmt->bindValue(':h', $input['host']); $stmt->bindValue(':p', $input['port']); $stmt->bindValue(':u', $input['user']); 
-                $stmt->bindValue(':pass', Security::encrypt($input['pass'])); $stmt->bindValue(':fe', $input['from_email']); $stmt->bindValue(':fn', $input['from_name']); $stmt->bindValue(':rt', $input['reply_to'] ?? ''); $stmt->bindValue(':bimi', $input['bimi_url'] ?? '');
-                $stmt->execute(); echo json_encode(['status' => 'success']); break;
+                $stmt->bindValue(':h', $input['host']); $stmt->bindValue(':p', $input['port']); $stmt->bindValue(':u', $input['user']); $stmt->bindValue(':pass', Security::encrypt($input['pass'])); $stmt->bindValue(':fe', $input['from_email']); $stmt->bindValue(':fn', $input['from_name']); $stmt->bindValue(':rt', $input['reply_to'] ?? ''); $stmt->bindValue(':bimi', $input['bimi_url'] ?? ''); $stmt->execute(); echo json_encode(['status' => 'success']); break;
             case 'delete_smtp': $db->exec("DELETE FROM smtp_profiles WHERE id = " . (int)$input['id']); echo json_encode(['status' => 'success']); break;
             case 'save_imap':
                 if (!$isPro) { echo json_encode(['status'=>'error', 'msg'=>'Pro Feature Locked']); break; }
-                $db->exec("DELETE FROM imap_config");
-                $stmt = $db->prepare("INSERT INTO imap_config (id, host, port, user, pass) VALUES (1, :h, :p, :u, :pass)");
-                $stmt->bindValue(':h', $input['host']); $stmt->bindValue(':p', $input['port']); $stmt->bindValue(':u', $input['user']); 
-                $stmt->bindValue(':pass', Security::encrypt($input['pass'])); $stmt->execute();
-                echo json_encode(['status' => 'success']); break;
+                $db->exec("DELETE FROM imap_config"); $stmt = $db->prepare("INSERT INTO imap_config (id, host, port, user, pass) VALUES (1, :h, :p, :u, :pass)"); $stmt->bindValue(':h', $input['host']); $stmt->bindValue(':p', $input['port']); $stmt->bindValue(':u', $input['user']); $stmt->bindValue(':pass', Security::encrypt($input['pass'])); $stmt->execute(); echo json_encode(['status' => 'success']); break;
             case 'test_smtp_profile':
                 $to = filter_var($input['to'], FILTER_VALIDATE_EMAIL); if (!$to) { echo json_encode(['status'=>'error', 'msg'=>'Invalid Email']); break; }
                 $stmt = $db->prepare("SELECT * FROM smtp_profiles WHERE id = :id"); $stmt->bindValue(':id', (int)$input['id']); $profile = $stmt->execute()->fetchArray(SQLITE3_ASSOC);
                 $smtp = new EliteSMTP($profile['host'], (int)$profile['port']);
-                $sent = $smtp->send($profile['user'], Security::decrypt($profile['pass']), $profile['from_email'], $profile['from_name'], $to, "Elite Sender Test", "<h1>Connection OK</h1>", '', [], $profile['reply_to'], $profile['bimi_url']);
-                if ($sent) echo json_encode(['status' => 'success', 'msg' => 'Connected!']); else echo json_encode(['status' => 'error', 'msg' => $smtp->getLastError()]); break;
+                if ($smtp->send($profile['user'], Security::decrypt($profile['pass']), $profile['from_email'], $profile['from_name'], $to, "Elite Test", "<h1>Connection OK</h1>", '', [], $profile['reply_to'], $profile['bimi_url'])) echo json_encode(['status' => 'success', 'msg' => 'Connected!']); else echo json_encode(['status' => 'error', 'msg' => $smtp->getLastError()]); break;
             case 'add_queue':
-                $stmt = $db->prepare("INSERT OR IGNORE INTO queue (recipient, name) VALUES (:email, :name)");
-                $chk = $db->prepare("SELECT 1 FROM suppressions WHERE email = :email");
+                $stmt = $db->prepare("INSERT OR IGNORE INTO queue (recipient, name) VALUES (:email, :name)"); $chk = $db->prepare("SELECT 1 FROM suppressions WHERE email = :email");
                 $count = 0; $db->exec('BEGIN'); $lines = preg_split('/[\r\n]+/', $input['recipients']);
                 foreach ($lines as $line) {
-                    $line = trim($line); if (empty($line)) continue;
-                    $email = $line; $name = ''; if (strpos($line, ',') !== false) { $parts = explode(',', $line); $email = trim($parts[0]); $name = trim($parts[1] ?? ''); }
-                    if (filter_var($email, FILTER_VALIDATE_EMAIL)) { $chk->bindValue(':email', $email); if (!$chk->execute()->fetchArray()) { $stmt->bindValue(':email', $email); $stmt->bindValue(':name', $name); $stmt->execute(); if($db->changes()) $count++; } }
+                    $line = trim($line); if (empty($line)) continue; $email = $line; $name = ''; if (strpos($line, ',') !== false) { $parts = explode(',', $line); $email = trim($parts[0]); $name = trim($parts[1] ?? ''); }
+                    if (filter_var($email, FILTER_VALIDATE_EMAIL)) { if($isPro && $input['validate_mx'] && !Validator::checkMX($email)) continue; $chk->bindValue(':email', $email); if (!$chk->execute()->fetchArray()) { $stmt->bindValue(':email', $email); $stmt->bindValue(':name', $name); $stmt->execute(); if($db->changes()) $count++; } }
                 } $db->exec('COMMIT'); echo json_encode(['status' => 'success', 'count' => $count]); break;
             case 'process_batch':
+                if (!$isPro && !empty($input['attachments'])) { die(json_encode(['status'=>'error','msg'=>'Attachments are a Pro Feature.'])); }
                 if (!empty($input['attachments'])) { $size = 0; foreach($input['attachments'] as $a) $size+=strlen($a['data']); if($size > 5242880) die(json_encode(['status'=>'error','msg'=>'Over 5MB'])); }
-                $profiles = []; $res = $db->query("SELECT * FROM smtp_profiles WHERE active=1 AND cooldown_until < " . time());
-                while ($row = $res->fetchArray(SQLITE3_ASSOC)) $profiles[] = $row;
+                $profiles = []; $res = $db->query("SELECT * FROM smtp_profiles WHERE active=1 AND cooldown_until < " . time()); while ($row = $res->fetchArray(SQLITE3_ASSOC)) $profiles[] = $row;
                 if (!$isPro && count($profiles) > 1) $profiles = array_slice($profiles, 0, 1);
                 if (empty($profiles)) die(json_encode(['status'=>'error','msg'=>'No Healthy SMTP']));
-                $limit = (int)$input['limit']; $res = $db->query("SELECT * FROM queue WHERE status='pending' LIMIT $limit");
-                $processed = []; $baseUrl = Security::getBaseUrl(); $i=0;
+                $limit = (int)$input['limit']; $res = $db->query("SELECT * FROM queue WHERE status='pending' LIMIT $limit"); $processed = []; $baseUrl = Security::getBaseUrl(); $i=0;
                 while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
-                    $profile = $profiles[$i % count($profiles)];
-                    $smtp = new EliteSMTP($profile['host'], $profile['port']);
+                    $profile = $profiles[$i % count($profiles)]; $smtp = new EliteSMTP($profile['host'], $profile['port']);
                     $body = EliteSMTP::spin($input['body']); $sub = EliteSMTP::spin($input['subject']); $name = $row['name']?:'';
                     $body = str_replace(['{name}','{email}'], [$name, $row['recipient']], $body); $sub = str_replace(['{name}','{email}'], [$name, $row['recipient']], $sub);
-                    $unsub = $baseUrl . "?action=unsubscribe&e=" . base64_encode($row['recipient']);
-                    $body = str_replace('{unsubscribe}', "<a href='$unsub'>Unsubscribe</a>", $body);
+                    $unsub = $baseUrl . "?action=unsubscribe&e=" . base64_encode($row['recipient']); $body = str_replace('{unsubscribe}', "<a href='$unsub'>Unsubscribe</a>", $body);
                     $body .= "<img src='{$baseUrl}?action=track&id={$row['id']}' width='1' height='1' style='display:none;' />";
                     $body = preg_replace_callback('/href="([^"]+)"/', function($m) use ($baseUrl, $row) { if (strpos($m[1], 'action=') !== false) return $m[0]; return 'href="' . $baseUrl . '?action=click&id=' . $row['id'] . '&r=' . base64_encode($m[1]) . '"'; }, $body);
                     $sent = $smtp->send($profile['user'], Security::decrypt($profile['pass']), $profile['from_email'], $profile['from_name'], $row['recipient'], $sub, $body, $unsub, $input['attachments']??[], $profile['reply_to'], $profile['bimi_url']);
                     $status = $sent ? 'sent' : 'failed'; $log = $sent ? '250 OK via '.$profile['host'] : $smtp->getLastError();
                     if(!$sent) { $db->exec("UPDATE smtp_profiles SET fails = fails + 1 WHERE id = {$profile['id']}"); if(strpos($log,'550')!==false) $db->exec("INSERT OR IGNORE INTO suppressions (email) VALUES ('{$row['recipient']}')"); } else { $db->exec("UPDATE smtp_profiles SET fails = 0 WHERE id = {$profile['id']}"); }
-                    $db->exec("UPDATE queue SET status='$status', log='".SQLite3::escapeString($log)."' WHERE id={$row['id']}");
-                    $processed[] = ['email'=>$row['recipient'], 'status'=>$status]; $i++;
-                }
-                echo json_encode(['status'=>'success', 'processed'=>$processed]); break;
-            
+                    $db->exec("UPDATE queue SET status='$status', log='".SQLite3::escapeString($log)."' WHERE id={$row['id']}"); $processed[] = ['email'=>$row['recipient'], 'status'=>$status]; $i++;
+                } echo json_encode(['status'=>'success', 'processed'=>$processed]); break;
             case 'get_stats':
-                $total = $db->querySingle("SELECT COUNT(*) FROM queue");
-                $pending = $db->querySingle("SELECT COUNT(*) FROM queue WHERE status='pending'");
-                $sent = $db->querySingle("SELECT COUNT(*) FROM queue WHERE status='sent'");
-                $failed = $db->querySingle("SELECT COUNT(*) FROM queue WHERE status='failed'");
-                $read = $db->querySingle("SELECT COUNT(*) FROM queue WHERE read_at IS NOT NULL");
-                $clicks = $db->querySingle("SELECT COUNT(*) FROM clicks");
                 $vips = []; $r = $db->query("SELECT recipient, score FROM queue WHERE score > 0 ORDER BY score DESC LIMIT 5"); while($ro=$r->fetchArray(SQLITE3_ASSOC)) $vips[]=$ro;
-                echo json_encode(['status'=>'success', 'stats'=>compact('total','pending','sent','failed','read','clicks'), 'vips'=>$vips]); break;
+                echo json_encode(['status'=>'success', 'stats'=>['total'=>$db->querySingle("SELECT COUNT(*) FROM queue"), 'pending'=>$db->querySingle("SELECT COUNT(*) FROM queue WHERE status='pending'"), 'sent'=>$db->querySingle("SELECT COUNT(*) FROM queue WHERE status='sent'"), 'failed'=>$db->querySingle("SELECT COUNT(*) FROM queue WHERE status='failed'"), 'read'=>$db->querySingle("SELECT COUNT(*) FROM queue WHERE read_at IS NOT NULL"), 'clicks'=>$db->querySingle("SELECT COUNT(*) FROM clicks")], 'vips'=>$vips]); break;
             case 'clear_queue': $db->exec("DELETE FROM queue"); echo json_encode(['status'=>'success']); break;
             case 'retry_failed': $db->exec("UPDATE queue SET status='pending' WHERE status='failed'"); echo json_encode(['status'=>'success']); break;
-            case 'resend_non_openers': $db->exec("UPDATE queue SET status='pending' WHERE status='sent' AND read_at IS NULL"); echo json_encode(['status'=>'success']); break;
+            case 'resend_non_openers': if(!$isPro) die(json_encode(['status'=>'error','msg'=>'Pro Feature'])); $db->exec("UPDATE queue SET status='pending' WHERE status='sent' AND read_at IS NULL"); echo json_encode(['status'=>'success']); break;
             case 'optimize_db': $db->optimize(); echo json_encode(['status'=>'success']); break;
             case 'change_password':
-                $old = trim($input['old_password'] ?? ''); $new = trim($input['new_password'] ?? '');
-                if (empty($old) || empty($new)) { echo json_encode(['status'=>'error','msg'=>'Fields cannot be empty']); break; }
-                $stmt = $db->prepare("SELECT value FROM config WHERE key = 'app_password'");
-                $hash = (string)$stmt->execute()->fetchArray(SQLITE3_NUM)[0];
+                $old = trim($input['old_password'] ?? ''); $new = trim($input['new_password'] ?? ''); if (empty($old) || empty($new)) { echo json_encode(['status'=>'error','msg'=>'Empty fields']); break; }
+                $hash = (string)$db->prepare("SELECT value FROM config WHERE key = 'app_password'")->execute()->fetchArray(SQLITE3_NUM)[0];
                 if (!empty($hash) && password_verify($old, $hash)) { $upd = $db->prepare("INSERT OR REPLACE INTO config (key, value) VALUES ('app_password', :pass)"); $upd->bindValue(':pass', password_hash($new, PASSWORD_BCRYPT)); $upd->execute(); echo json_encode(['status' => 'success']); } else { echo json_encode(['status' => 'error', 'msg' => 'Incorrect Password']); } break;
             case 'save_template':
                 $stmt = $db->prepare("INSERT OR REPLACE INTO config (key, value) VALUES (:key, :value)"); $stmt->bindValue(':key', 'saved_subject'); $stmt->bindValue(':value', $input['subject']); $stmt->execute(); $stmt->bindValue(':key', 'saved_body'); $stmt->bindValue(':value', $input['body']); $stmt->execute(); echo json_encode(['status' => 'success']); break;
@@ -449,18 +347,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $stmt = $db->prepare("INSERT INTO campaigns (subject, body) VALUES (:sub, :body)"); $stmt->bindValue(':sub', $input['subject']); $stmt->bindValue(':body', $input['body']); $stmt->execute(); echo json_encode(['status' => 'success']); break;
             case 'get_campaigns': $res = $db->query("SELECT * FROM campaigns ORDER BY id DESC"); $data = []; while ($row = $res->fetchArray(SQLITE3_ASSOC)) $data[] = $row; echo json_encode(['status' => 'success', 'data' => $data]); break;
             case 'delete_campaign': $db->exec("DELETE FROM campaigns WHERE id = " . (int)$input['id']); echo json_encode(['status' => 'success']); break;
-            case 'rotate_api_key': 
-                if (!$isPro) die(json_encode(['status'=>'error', 'msg'=>'Pro Feature Locked']));
-                $newKey = bin2hex(random_bytes(24)); $db->exec("INSERT OR REPLACE INTO config (key, value) VALUES ('api_key', '$newKey')"); echo json_encode(['status' => 'success']); break;
-            case 'export_data': 
-                if (!$isPro) die(json_encode(['status'=>'error', 'msg'=>'Pro Feature Locked']));
-                $export = ['queue' => [], 'suppressions' => []]; $q = $db->query("SELECT * FROM queue"); while ($r = $q->fetchArray(SQLITE3_ASSOC)) $export['queue'][] = $r; $s = $db->query("SELECT * FROM suppressions"); while ($r = $s->fetchArray(SQLITE3_ASSOC)) $export['suppressions'][] = $r; echo json_encode(['status' => 'success', 'data' => json_encode($export, JSON_PRETTY_PRINT)]); break;
+            case 'rotate_api_key': if (!$isPro) die(json_encode(['status'=>'error', 'msg'=>'Pro Feature Locked'])); $db->exec("INSERT OR REPLACE INTO config (key, value) VALUES ('api_key', '" . bin2hex(random_bytes(24)) . "')"); echo json_encode(['status' => 'success']); break;
+            case 'export_data': if (!$isPro) die(json_encode(['status'=>'error', 'msg'=>'Pro Feature Locked'])); $export = ['queue' => [], 'suppressions' => []]; $q = $db->query("SELECT * FROM queue"); while ($r = $q->fetchArray(SQLITE3_ASSOC)) $export['queue'][] = $r; $s = $db->query("SELECT * FROM suppressions"); while ($r = $s->fetchArray(SQLITE3_ASSOC)) $export['suppressions'][] = $r; echo json_encode(['status' => 'success', 'data' => json_encode($export, JSON_PRETTY_PRINT)]); break;
         }
     } catch (Exception $e) { http_response_code(500); echo json_encode(['status' => 'error', 'msg' => $e->getMessage()]); }
     exit;
 }
-
-// --- 5. SMTP ENGINE ---
 
 class EliteSMTP {
     private $sock; private $logs = [];
@@ -476,14 +368,10 @@ class EliteSMTP {
             if($bimiUrl) $headers .= "BIMI-Selector: v=BIMI1; l=$bimiUrl; a=;\r\n";
             $headers .= "Content-Type: multipart/mixed; boundary=\"$boundary\"\r\n";
             if (!empty($unsubUrl)) { $headers .= "List-Unsubscribe: <$unsubUrl>\r\nList-Unsubscribe-Post: List-Unsubscribe=One-Click\r\n"; }
-            
             $style = "<style>@media (prefers-color-scheme: dark) { body { background: #1a1a1a !important; color: #ffffff !important; } a { color: #38bdf8 !important; } }</style>";
             $body = $style . $body;
-
             $msg = "--$boundary\r\nContent-Type: text/html; charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n\r\n" . chunk_split(base64_encode($body)) . "\r\n";
-            foreach ($attachments as $att) {
-                $msg .= "--$boundary\r\nContent-Type: {$att['type']}; name=\"{$att['name']}\"\r\nContent-Disposition: attachment; filename=\"{$att['name']}\"\r\nContent-Transfer-Encoding: base64\r\n\r\n" . chunk_split(explode(',', $att['data'])[1]) . "\r\n";
-            }
+            foreach ($attachments as $att) { $msg .= "--$boundary\r\nContent-Type: {$att['type']}; name=\"{$att['name']}\"\r\nContent-Disposition: attachment; filename=\"{$att['name']}\"\r\nContent-Transfer-Encoding: base64\r\n\r\n" . chunk_split(explode(',', $att['data'])[1]) . "\r\n"; }
             $msg .= "--$boundary--";
             $this->cmd($headers . "\r\n" . $msg . "\r\n.", 250); $this->cmd("QUIT", 221); return true;
         } catch (Exception $e) { $this->logs[] = $e->getMessage(); return false; } finally { if ($this->sock) { @fclose($this->sock); $this->sock = null; } }
@@ -492,15 +380,10 @@ class EliteSMTP {
         $protocol = ($this->port == 465) ? 'ssl://' : 'tcp://'; $this->sock = @fsockopen($protocol . $this->host, $this->port, $errno, $errstr, 10);
         if (!$this->sock) throw new Exception("Connection failed: $errstr");
         $this->getResponse(); $this->cmd("EHLO " . gethostname());
-        if ($this->port == 587) { $this->cmd("STARTTLS", 220); if (!stream_socket_enable_crypto($this->sock, true, STREAM_CRYPTO_METHOD_TLS_CLIENT)) throw new Exception("TLS Fail"); $this->cmd("EHLO " . gethostname()); }
+        if ($this->port == 587) { $this->cmd("STARTTLS", 220); stream_socket_enable_crypto($this->sock, true, STREAM_CRYPTO_METHOD_TLS_CLIENT); $this->cmd("EHLO " . gethostname()); }
     }
     private function auth($user, $pass) { $this->cmd("AUTH LOGIN", 334); $this->cmd(base64_encode($user), 334); $this->cmd(base64_encode($pass), 235); }
-    private function cmd($cmd, $expect = 250) {
-        fwrite($this->sock, $cmd . "\r\n"); $res = $this->getResponse(); $code = (int)substr($res, 0, 3);
-        $allowed = is_array($expect) ? $expect : [$expect];
-        if (!in_array($code, $allowed)) throw new Exception("Error: $res (Expected " . implode(',', $allowed) . ")");
-        return $res;
-    }
+    private function cmd($cmd, $expect = 250) { fwrite($this->sock, $cmd . "\r\n"); $res = $this->getResponse(); $code = (int)substr($res, 0, 3); $allowed = is_array($expect) ? $expect : [$expect]; if (!in_array($code, $allowed)) throw new Exception("Error: $res"); return $res; }
     private function getResponse() { $res = ""; while ($str = fgets($this->sock, 512)) { $res .= $str; if (substr($str, 3, 1) == " ") break; } return trim($res); }
     public function getLastError() { return end($this->logs); }
 }
@@ -545,16 +428,18 @@ class EliteSMTP {
     </div>
 
     <div x-show="showUpgradeModal" class="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-950/90 backdrop-blur-md" x-cloak x-transition.opacity>
-        <div class="glass-panel p-8 rounded-2xl w-full max-w-md relative border border-primary-500/30 shadow-[0_0_50px_rgba(56,189,248,0.15)]" @click.away="showUpgradeModal = false">
+        <div class="glass-panel p-8 rounded-2xl w-full max-w-lg relative border border-primary-500/30 shadow-[0_0_50px_rgba(56,189,248,0.15)]" @click.away="showUpgradeModal = false">
             <button @click="showUpgradeModal = false" class="absolute top-4 right-4 text-slate-400 hover:text-white"><i class="bi bi-x-lg"></i></button>
             <div class="w-16 h-16 bg-primary-500/20 rounded-full flex items-center justify-center mx-auto mb-4 text-primary-400 text-3xl"><i class="bi bi-rocket-takeoff-fill"></i></div>
             <h2 class="text-2xl font-bold text-white text-center mb-2" x-text="upgradeTitle"></h2>
             <p class="text-slate-400 text-center text-sm mb-6">Upgrade to Elite Sender Pro to unlock this feature and scale your campaigns globally.</p>
             <ul class="space-y-3 mb-8 text-sm text-slate-300">
-                <li class="flex gap-3"><i class="bi bi-check-circle-fill text-accent-400"></i> <span><strong>4x Turbo Engine:</strong> Send up to 20,000 emails/hour.</span></li>
-                <li class="flex gap-3"><i class="bi bi-check-circle-fill text-accent-400"></i> <span><strong>Unlimited SMTPs:</strong> Auto-rotate IPs to avoid spam filters.</span></li>
-                <li class="flex gap-3"><i class="bi bi-check-circle-fill text-accent-400"></i> <span><strong>IMAP Bounce Shield:</strong> Auto-clean dead emails.</span></li>
-                <li class="flex gap-3"><i class="bi bi-check-circle-fill text-accent-400"></i> <span><strong>API Nexus:</strong> Connect your website forms directly.</span></li>
+                <li class="flex gap-3"><i class="bi bi-check-circle-fill text-accent-400"></i> <span><strong>4x Turbo Engine:</strong> Send up to 100,000 emails/hour.</span></li>
+                <li class="flex gap-3"><i class="bi bi-check-circle-fill text-accent-400"></i> <span><strong>Unlimited SMTPs:</strong> Auto-rotate IPs to completely bypass spam filters.</span></li>
+                <li class="flex gap-3"><i class="bi bi-check-circle-fill text-accent-400"></i> <span><strong>IMAP Bounce Shield:</strong> Auto-clean dead emails automatically.</span></li>
+                <li class="flex gap-3"><i class="bi bi-check-circle-fill text-accent-400"></i> <span><strong>Smart CSV & MX:</strong> Bulk import with live DNS checking.</span></li>
+                <li class="flex gap-3"><i class="bi bi-check-circle-fill text-accent-400"></i> <span><strong>Campaign Attachments:</strong> Send PDFs and media directly.</span></li>
+                <li class="flex gap-3"><i class="bi bi-check-circle-fill text-accent-400"></i> <span><strong>Spam AI & Retargeting:</strong> Live scoring & 1-click resend to ghosts.</span></li>
             </ul>
             <a href="https://mywebvas.com" target="_blank" class="block w-full py-3.5 bg-gradient-to-r from-primary-600 to-primary-500 hover:from-primary-500 hover:to-primary-400 text-white rounded-xl font-bold text-center shadow-lg transition transform hover:scale-[1.02]">Get Elite Pro License</a>
             <p class="text-center text-xs text-slate-500 mt-4">Already purchased? Enter your key in the Sidebar.</p>
@@ -591,10 +476,7 @@ class EliteSMTP {
                 <button @click="triggerUpgrade('Unlock Elite Pro')" class="w-full relative overflow-hidden group rounded-xl p-3 bg-gradient-to-br from-slate-800 to-slate-900 border border-primary-500/30 hover:border-primary-400 transition-all text-left">
                     <div class="absolute -inset-full h-full w-full z-0 block transform -skew-x-12 bg-gradient-to-r from-transparent via-white to-transparent opacity-10 group-hover:animate-[shimmer_1.5s_infinite]"></div>
                     <div class="flex items-center justify-between relative z-10">
-                        <div>
-                            <span class="block text-primary-400 text-xs font-bold uppercase tracking-wider mb-0.5"><i class="bi bi-lightning-charge-fill"></i> Free Tier</span>
-                            <span class="block text-white text-xs">Upgrade to Pro &rarr;</span>
-                        </div>
+                        <div><span class="block text-primary-400 text-xs font-bold uppercase tracking-wider mb-0.5"><i class="bi bi-lightning-charge-fill"></i> Free Tier</span><span class="block text-white text-xs">Upgrade to Pro &rarr;</span></div>
                     </div>
                 </button>
             </div>
@@ -606,11 +488,7 @@ class EliteSMTP {
                 <input type="text" x-model="licenseKey" class="w-full glass-input text-xs p-2 rounded mb-2 font-mono" placeholder="ELITE-XXXX-XXXX" :disabled="isPro">
                 <button x-show="!isPro" @click="activateLicense" class="w-full py-1.5 bg-primary-600/20 hover:bg-primary-600/40 text-primary-400 text-xs font-bold rounded transition border border-primary-500/20">Verify Key</button>
             </div>
-            
-            <div class="flex items-center justify-between px-1">
-                <span class="text-[10px] text-slate-500">v6.0 Cloud Core</span>
-                <span x-text="lastLogin" class="text-[8px] text-primary-500/80"></span>
-            </div>
+            <div class="flex items-center justify-between px-1"><span class="text-[10px] text-slate-500">v7.0 Cloud Core</span><span x-text="lastLogin" class="text-[8px] text-primary-500/80"></span></div>
         </div>
     </aside>
 
@@ -634,17 +512,15 @@ class EliteSMTP {
                 <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
                     <div class="glass-panel rounded-2xl p-6 flex flex-col gap-4">
                         <h3 class="text-lg font-semibold text-white flex items-center gap-2"><i class="bi bi-speedometer2 text-primary-400"></i> Turbo Engine</h3>
-                        
                         <div class="p-4 rounded-xl bg-slate-900/50 border border-white/5 relative">
                             <label class="text-xs text-slate-400 uppercase font-bold flex justify-between">Threads <span x-show="!isPro" class="text-primary-400"><i class="bi bi-lock-fill"></i> Pro</span></label>
                             <input type="range" min="1" max="4" x-model="threads" class="w-full h-2 bg-slate-700 rounded-lg cursor-pointer mt-2 accent-primary-500" @change="if(!isPro && threads > 1) { threads = 1; triggerUpgrade('Unlock Multi-Threading'); }">
                             <div class="flex justify-between text-xs text-slate-500 mt-1"><span>1x</span><span x-text="threads + 'x Turbo'" class="text-primary-400 font-bold"></span><span>4x</span></div>
                         </div>
-                        
                         <div class="p-4 rounded-xl bg-slate-900/50 border border-white/5"><label class="text-xs text-slate-400 uppercase font-bold">Batch Size</label><input type="range" min="1" max="20" x-model="batchSize" class="w-full h-2 bg-slate-700 rounded-lg cursor-pointer mt-2 accent-primary-500"><div class="flex justify-between text-xs text-slate-500 mt-1"><span>1</span><span x-text="batchSize" class="font-mono"></span><span>20</span></div></div>
                         <button @click="processQueue()" :disabled="isProcessing || stats.pending == 0" class="w-full py-4 rounded-xl font-bold text-lg transition-all flex items-center justify-center gap-2 group" :class="isProcessing ? 'bg-slate-700 cursor-not-allowed' : 'bg-gradient-to-r from-primary-600 to-primary-500 hover:from-primary-500 text-white shadow-lg shadow-primary-500/20'"><span x-show="!isProcessing" class="group-hover:scale-105 transition-transform"><i class="bi bi-rocket-takeoff-fill"></i> Ignite Campaign</span><span x-show="isProcessing" class="flex items-center gap-2"><i class="animate-spin bi bi-arrow-repeat"></i> LivePulse Active...</span></button>
                         <div class="flex gap-2"><button @click="retryFailed()" class="flex-1 py-3 rounded-xl border border-red-500/20 text-red-400 text-xs font-medium hover:bg-red-500/10 transition">Retry Failed</button><button @click="clearQueue()" class="flex-1 py-3 rounded-xl text-slate-500 text-xs hover:text-white transition hover:bg-white/5">Clear Queue</button></div>
-                        <button x-show="stats.sent > 0" @click="resendNonOpeners()" class="w-full py-3 rounded-xl bg-indigo-600/20 border border-indigo-500/30 text-indigo-400 text-sm hover:bg-indigo-600/30 transition flex items-center justify-center gap-2"><i class="bi bi-recycle"></i> Resend to Non-Openers</button>
+                        <button x-show="stats.sent > 0" @click="isPro ? resendNonOpeners() : triggerUpgrade('Unlock Retargeting')" class="w-full py-3 rounded-xl bg-indigo-600/20 border border-indigo-500/30 text-indigo-400 text-sm hover:bg-indigo-600/30 transition flex items-center justify-center gap-2"><i class="bi" :class="isPro ? 'bi-recycle' : 'bi-lock-fill'"></i> Resend to Non-Openers</button>
                     </div>
                     
                     <div class="lg:col-span-2 space-y-6">
@@ -666,15 +542,10 @@ class EliteSMTP {
             <div x-show="activeTab === 'growth'" x-transition.opacity>
                 <div class="max-w-3xl mx-auto glass-panel p-8 rounded-2xl relative overflow-hidden">
                     <div x-show="!isPro" class="pro-overlay">
-                        <i class="bi bi-magnet-fill text-4xl text-primary-400 mb-3"></i>
-                        <h2 class="text-2xl font-bold text-white mb-2">Automate Lead Capture</h2>
-                        <p class="text-slate-300 mb-6 max-w-sm">Unlock the Nexus API to embed beautiful signup forms directly on your website. Emails flow straight into your queue instantly.</p>
-                        <button @click="triggerUpgrade('Unlock API Forms')" class="px-8 py-3 bg-primary-600 hover:bg-primary-500 text-white rounded-full font-bold shadow-lg transition">Upgrade to Pro</button>
+                        <i class="bi bi-magnet-fill text-4xl text-primary-400 mb-3"></i><h2 class="text-2xl font-bold text-white mb-2">Automate Lead Capture</h2><p class="text-slate-300 mb-6 max-w-sm">Unlock the Nexus API to embed beautiful signup forms directly on your website. Emails flow straight into your queue instantly.</p><button @click="triggerUpgrade('Unlock API Forms')" class="px-8 py-3 bg-primary-600 hover:bg-primary-500 text-white rounded-full font-bold shadow-lg transition">Upgrade to Pro</button>
                     </div>
-                    
                     <div :class="!isPro ? 'blur-sm opacity-50 select-none' : ''">
-                        <h3 class="text-xl font-bold text-white mb-4">Embedded Growth Form</h3>
-                        <p class="text-slate-400 text-sm mb-6">Copy and paste this HTML code onto your website to collect subscribers directly into Elite Sender.</p>
+                        <h3 class="text-xl font-bold text-white mb-4">Embedded Growth Form</h3><p class="text-slate-400 text-sm mb-6">Copy and paste this HTML code onto your website to collect subscribers directly into Elite Sender.</p>
                         <div class="bg-[#0a0f1c] p-4 rounded-xl border border-white/10 relative group">
                             <textarea readonly class="w-full h-48 bg-transparent text-slate-300 font-mono text-xs focus:outline-none resize-none" x-text="getGrowthForm()"></textarea>
                             <button @click="if(isPro) { navigator.clipboard.writeText(getGrowthForm()); notify('Copied!', 'success'); }" class="absolute top-4 right-4 px-3 py-1 bg-white/10 hover:bg-white/20 rounded text-xs text-white transition">Copy Code</button>
@@ -690,7 +561,20 @@ class EliteSMTP {
                     <div class="flex-1 flex flex-col space-y-1 min-h-[300px]">
                         <div class="flex justify-between px-1"><label class="text-xs text-slate-400 font-bold uppercase">HTML Body (Spintax Supported)</label><div class="flex gap-2 text-xs font-medium bg-white/5 px-2 py-1 rounded-lg"><span class="cursor-pointer hover:text-white transition" @click="wrapText('b')" title="Bold"><b>B</b></span><span class="cursor-pointer hover:text-white transition" @click="wrapText('i')" title="Italic"><i>I</i></span><span class="cursor-pointer hover:text-white transition" @click="addLink()" title="Link"><i class="bi bi-link"></i></span><span class="cursor-pointer hover:text-white transition" @click="showPreview = !showPreview" title="Data Preview"><i class="bi bi-eye"></i></span></div></div>
                         <textarea x-ref="editor" x-model="compose.body" @input="checkSpam();saveDraft()" class="flex-1 w-full p-4 rounded-xl glass-input font-mono text-sm leading-relaxed focus:ring-1 focus:ring-primary-500/50 resize-none" placeholder="Hello {name}, check this {deal|offer}..."></textarea>
-                        <div class="flex justify-between items-center text-xs text-primary-400 px-1 mt-1"><div class="space-x-3 flex items-center"><span class="cursor-pointer hover:text-white transition" @click="insertVar('{name}')">+ Name</span><span class="cursor-pointer hover:text-white transition" @click="insertVar('{email}')">+ Email</span><label class="cursor-pointer flex items-center gap-1 hover:text-white transition"><i class="bi bi-paperclip"></i> Attach<input type="file" multiple class="hidden" @change="handleAttachments"></label><span x-show="attachments.length > 0" x-text="attachments.length" class="text-white bg-primary-600/50 px-1.5 rounded-full text-[10px]"></span></div><div :class="spamScore > 50 ? 'text-red-400' : 'text-green-400'">Spam Score: <span x-text="spamScore"></span>%</div></div>
+                        <div class="flex justify-between items-center text-xs text-primary-400 px-1 mt-1">
+                            <div class="space-x-3 flex items-center">
+                                <span class="cursor-pointer hover:text-white transition" @click="insertVar('{name}')">+ Name</span>
+                                <span class="cursor-pointer hover:text-white transition" @click="insertVar('{email}')">+ Email</span>
+                                <label class="cursor-pointer flex items-center gap-1 hover:text-white transition" @click.prevent="isPro ? $refs.fileInput.click() : triggerUpgrade('Unlock Attachments')">
+                                    <i class="bi" :class="isPro ? 'bi-paperclip' : 'bi-lock-fill'"></i> Attach
+                                    <input type="file" multiple class="hidden" x-ref="fileInput" @change="handleAttachments">
+                                </label>
+                                <span x-show="attachments.length > 0" x-text="attachments.length" class="text-white bg-primary-600/50 px-1.5 rounded-full text-[10px]"></span>
+                            </div>
+                            <div class="cursor-pointer transition" @click="if(!isPro) triggerUpgrade('Unlock Spam AI')" :class="!isPro ? 'text-slate-500' : (spamScore > 50 ? 'text-red-400' : 'text-green-400')">
+                                <i class="bi" :class="isPro ? '' : 'bi-lock-fill'"></i> Spam Score: <span x-text="isPro ? spamScore + '%' : 'Locked'"></span>
+                            </div>
+                        </div>
                     </div>
                 </div>
                 <div class="w-full md:w-1/2 glass-panel rounded-2xl flex flex-col overflow-hidden bg-slate-200 min-h-[500px]">
@@ -701,7 +585,6 @@ class EliteSMTP {
 
             <div x-show="activeTab === 'settings'" x-transition.opacity>
                 <div class="max-w-2xl mx-auto glass-panel p-6 md:p-8 rounded-2xl space-y-8">
-                    
                     <div>
                         <div class="flex justify-between items-center mb-4 border-b border-white/5 pb-2"><h3 class="text-xl font-semibold text-white">SMTP Rotation Network</h3><button @click="if(!isPro && profiles.length >= 1) { triggerUpgrade('Unlimited SMTP Rotation'); } else { showAddSmtp = true; }" class="px-3 py-1 bg-primary-600 rounded text-xs text-white hover:bg-primary-500 transition">+ Add Node</button></div>
                         <div x-show="!isPro && profiles.length > 0" class="mb-4 p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-xs text-red-300 flex items-center gap-2"><i class="bi bi-exclamation-triangle-fill text-red-400"></i> Free Version limited to 1 SMTP. Upgrade to add unlimited servers.</div>
@@ -720,19 +603,10 @@ class EliteSMTP {
                     </div>
                     
                     <div class="relative overflow-hidden p-6 rounded-2xl border border-white/5 bg-black/10">
-                        <div x-show="!isPro" class="pro-overlay rounded-2xl">
-                            <i class="bi bi-shield-lock-fill text-4xl text-primary-400 mb-2"></i>
-                            <h3 class="text-xl font-bold text-white">IMAP Guardian Engine</h3>
-                            <p class="text-xs text-slate-300 mt-2 max-w-xs mx-auto mb-4">Automatically scan your inbox for bounced emails and suppress them to protect your sender reputation.</p>
-                            <button @click="triggerUpgrade('Unlock IMAP Guardian')" class="px-6 py-2 bg-primary-600 hover:bg-primary-500 text-white rounded-full font-bold shadow transition text-sm">Upgrade to Pro</button>
-                        </div>
+                        <div x-show="!isPro" class="pro-overlay rounded-2xl"><i class="bi bi-shield-lock-fill text-4xl text-primary-400 mb-2"></i><h3 class="text-xl font-bold text-white">IMAP Guardian Engine</h3><p class="text-xs text-slate-300 mt-2 max-w-xs mx-auto mb-4">Automatically scan your inbox for bounced emails and suppress them to protect your sender reputation.</p><button @click="triggerUpgrade('Unlock IMAP Guardian')" class="px-6 py-2 bg-primary-600 hover:bg-primary-500 text-white rounded-full font-bold shadow transition text-sm">Upgrade to Pro</button></div>
                         <div :class="!isPro ? 'blur-sm opacity-30 select-none' : ''">
                             <h3 class="text-xl font-semibold text-white mb-4 border-b border-white/5 pb-2">Bounce Handler (IMAP)</h3>
-                            <div class="space-y-3">
-                                <div class="grid grid-cols-2 gap-3"><input type="text" x-model="imap.host" class="glass-input px-3 py-2 rounded text-sm" placeholder="IMAP Host"><input type="text" x-model="imap.port" class="glass-input px-3 py-2 rounded text-sm" placeholder="Port (993)"></div>
-                                <div class="grid grid-cols-2 gap-3"><input type="text" x-model="imap.user" class="glass-input px-3 py-2 rounded text-sm" placeholder="Email"><input type="password" x-model="imap.pass" class="glass-input px-3 py-2 rounded text-sm" placeholder="Password"></div>
-                                <div class="flex justify-end"><button @click="if(isPro) saveImap()" class="px-4 py-2 bg-primary-600 rounded text-sm text-white hover:bg-primary-500 transition">Save Configuration</button></div>
-                            </div>
+                            <div class="space-y-3"><div class="grid grid-cols-2 gap-3"><input type="text" x-model="imap.host" class="glass-input px-3 py-2 rounded text-sm" placeholder="IMAP Host"><input type="text" x-model="imap.port" class="glass-input px-3 py-2 rounded text-sm" placeholder="Port (993)"></div><div class="grid grid-cols-2 gap-3"><input type="text" x-model="imap.user" class="glass-input px-3 py-2 rounded text-sm" placeholder="Email"><input type="password" x-model="imap.pass" class="glass-input px-3 py-2 rounded text-sm" placeholder="Password"></div><div class="flex justify-end"><button @click="if(isPro) saveImap()" class="px-4 py-2 bg-primary-600 rounded text-sm text-white hover:bg-primary-500 transition">Save Configuration</button></div></div>
                         </div>
                     </div>
                     
@@ -741,17 +615,41 @@ class EliteSMTP {
                     <div>
                         <h3 class="text-xl font-semibold text-white mb-6 border-b border-white/5 pb-4">Maintenance & Account</h3>
                         <div class="flex justify-between items-center mb-6"><button @click="isPro ? exportData() : triggerUpgrade('Unlock JSON Backups')" class="text-sm text-primary-400 hover:text-primary-300 transition flex items-center gap-1"><i class="bi" :class="isPro ? 'bi-cloud-download' : 'bi-lock-fill'"></i> Backup Data</button><button @click="optimizeDb()" class="text-sm text-green-400 hover:text-green-300 underline transition" x-text="optBtnText">Clean & Compact DB</button></div>
-                        <div class="bg-white/5 p-4 rounded-xl border border-white/5 space-y-3">
-                            <h4 class="text-sm font-bold text-white">Change Master Password</h4>
-                            <div class="grid grid-cols-2 gap-3"><input type="password" x-model="passChange.old" class="glass-input px-3 py-2 rounded text-sm" placeholder="Current Password"><input type="password" x-model="passChange.new" class="glass-input px-3 py-2 rounded text-sm" placeholder="New Password"></div>
-                            <div class="flex justify-end"><button @click="changePassword()" class="px-6 py-2 border border-white/10 hover:bg-white/5 text-slate-300 rounded-lg text-sm font-medium transition">Update Password</button></div>
-                        </div>
+                        <div class="bg-white/5 p-4 rounded-xl border border-white/5 space-y-3"><h4 class="text-sm font-bold text-white">Change Master Password</h4><div class="grid grid-cols-2 gap-3"><input type="password" x-model="passChange.old" class="glass-input px-3 py-2 rounded text-sm" placeholder="Current Password"><input type="password" x-model="passChange.new" class="glass-input px-3 py-2 rounded text-sm" placeholder="New Password"></div><div class="flex justify-end"><button @click="changePassword()" class="px-6 py-2 border border-white/10 hover:bg-white/5 text-slate-300 rounded-lg text-sm font-medium transition">Update Password</button></div></div>
                     </div>
                 </div>
             </div>
             
             <div x-show="activeTab === 'recipients'" x-transition.opacity>
-                <div class="max-w-3xl mx-auto glass-panel p-6 md:p-8 rounded-2xl text-center border-dashed border-2 border-white/10"><h3 class="text-xl font-semibold text-white">Import Audience</h3><div class="mt-6 flex justify-center gap-4"><button @click="importMode = 'text'" :class="importMode==='text' ? 'bg-white/10 text-white' : 'text-slate-500'" class="px-4 py-1 rounded-full text-xs transition">Text Paste</button><button @click="importMode = 'csv'" :class="importMode==='csv' ? 'bg-white/10 text-white' : 'text-slate-500'" class="px-4 py-1 rounded-full text-xs transition">Upload CSV</button></div><div x-show="importMode === 'text'"><p class="text-slate-400 text-sm mt-4 mb-2">Format: <code>email, Name</code></p><textarea x-model="recipientInput" rows="6" class="w-full glass-input rounded-xl p-4 text-sm font-mono" placeholder="john@example.com, John"></textarea></div><div x-show="importMode === 'csv'" class="mt-6"><label class="cursor-pointer block p-8 border-2 border-dashed border-white/20 rounded-xl hover:border-primary-500/50 transition bg-white/5"><i class="bi bi-filetype-csv text-4xl text-slate-400"></i><p class="mt-2 text-sm text-slate-300">Click to upload .CSV</p><input type="file" class="hidden" accept=".csv" @change="handleCsv"></label></div><div class="flex items-center justify-center gap-2 mb-4 mt-6"><input type="checkbox" x-model="validateMx" id="vmx" class="accent-primary-500"><label for="vmx" class="text-sm text-slate-400">Validate MX</label><span class="text-[10px] text-slate-500 block ml-1">Checks DNS</span></div><button @click="addToQueue()" class="px-8 py-3 bg-primary-600 text-white rounded-full font-medium shadow-lg hover:bg-primary-500 transition">Import to Queue</button></div>
+                <div class="max-w-3xl mx-auto glass-panel p-6 md:p-8 rounded-2xl text-center border-dashed border-2 border-white/10 relative overflow-hidden">
+                    
+                    <h3 class="text-xl font-semibold text-white">Import Audience</h3>
+                    <div class="mt-6 flex justify-center gap-4 relative z-10">
+                        <button @click="importMode = 'text'" :class="importMode==='text' ? 'bg-white/10 text-white' : 'text-slate-500'" class="px-4 py-1 rounded-full text-xs transition">Text Paste</button>
+                        <button @click="isPro ? importMode = 'csv' : triggerUpgrade('Unlock Bulk CSV Import')" :class="importMode==='csv' ? 'bg-white/10 text-white' : 'text-slate-500'" class="px-4 py-1 rounded-full text-xs transition flex items-center gap-1"><i class="bi" :class="isPro ? '' : 'bi-lock-fill'"></i> Upload CSV</button>
+                    </div>
+                    
+                    <div x-show="importMode === 'text'"><p class="text-slate-400 text-sm mt-4 mb-2">Format: <code>email, Name</code></p><textarea x-model="recipientInput" rows="6" class="w-full glass-input rounded-xl p-4 text-sm font-mono" placeholder="john@example.com, John"></textarea></div>
+                    
+                    <div x-show="importMode === 'csv'" class="mt-6 relative">
+                        <div x-show="!isPro" class="pro-overlay rounded-xl z-20">
+                            <i class="bi bi-file-earmark-spreadsheet-fill text-4xl text-primary-400 mb-2"></i>
+                            <h3 class="text-xl font-bold text-white mb-2">Bulk CSV Imports</h3>
+                            <button @click="triggerUpgrade('Unlock Bulk CSV Import')" class="px-6 py-2 bg-primary-600 text-white rounded-full font-bold shadow text-sm">Upgrade to Pro</button>
+                        </div>
+                        <label class="cursor-pointer block p-8 border-2 border-dashed border-white/20 rounded-xl hover:border-primary-500/50 transition bg-white/5" :class="!isPro ? 'blur-sm select-none' : ''">
+                            <i class="bi bi-filetype-csv text-4xl text-slate-400"></i><p class="mt-2 text-sm text-slate-300">Click to upload .CSV</p>
+                            <input type="file" class="hidden" accept=".csv" @change="isPro ? handleCsv($event) : null">
+                        </label>
+                    </div>
+                    
+                    <div class="flex items-center justify-center gap-2 mb-4 mt-6">
+                        <input type="checkbox" x-model="validateMx" id="vmx" class="accent-primary-500" :disabled="!isPro" @click="if(!isPro) { $event.preventDefault(); triggerUpgrade('Unlock Live MX Validation'); }">
+                        <label for="vmx" class="text-sm flex items-center gap-1" :class="isPro ? 'text-slate-400' : 'text-slate-600'"><i class="bi" :class="isPro ? '' : 'bi-lock-fill'"></i> Validate MX</label>
+                        <span class="text-[10px] text-slate-500 block ml-1">Checks DNS</span>
+                    </div>
+                    <button @click="addToQueue()" class="px-8 py-3 bg-primary-600 text-white rounded-full font-medium shadow-lg hover:bg-primary-500 transition">Import to Queue</button>
+                </div>
             </div>
         </div>
     </main>
@@ -767,14 +665,9 @@ class EliteSMTP {
                 config: { cron_url: '', api_url: '', api_key: '' }, toasts: [], optBtnText: 'Clean & Compact DB', authBtnText: 'Initialize',
                 showAddSmtp: false, newSmtp: { host: '', port: '587', user: '', pass: '', from_email: '', from_name: '', reply_to: '', bimi_url: '' },
                 
-                // ELITE UPSELL LOGIC
                 isPro: false, licenseKey: '', licensePlan: '', showUpgradeModal: false, upgradeTitle: 'Unlock Pro Features',
                 
-                triggerUpgrade(title) {
-                    this.upgradeTitle = title;
-                    this.showUpgradeModal = true;
-                },
-
+                triggerUpgrade(title) { this.upgradeTitle = title; this.showUpgradeModal = true; },
                 async init() { await this.checkAuth(); },
                 async checkAuth() { const res = await this.api('check_auth'); if(res?.is_auth === false) { this.authState.auth = false; } this.authState = { setup: res.is_setup, auth: res.is_auth, recovery: res.recovery_mode, csrf: res.csrf }; this.authBtnText = this.authState.recovery ? 'Reset Password' : (this.authState.setup ? 'Unlock' : 'Initialize'); this.isPro = res?.is_pro || false; this.licenseKey = res?.license_key || ''; this.licensePlan = res?.license_plan || ''; if (this.authState.auth) this.loadSystem(); },
                 async performAuth() { this.authBtnText = "Authenticating..."; const action = this.authState.recovery ? 'reset_password' : (this.authState.setup ? 'login' : 'setup'); const res = await this.api(action, { password: this.authInput, username: this.hpInput }); if (res?.status === 'success') { this.authBtnText = "Success!"; setTimeout(() => { this.authInput = ''; this.authState.auth = true; this.authState.setup = true; this.authState.recovery = false; this.loadSystem(); }, 500); } else { this.notify(res?.msg || 'Invalid Password', 'error'); this.authBtnText = "Unlock"; } },
@@ -820,7 +713,7 @@ class EliteSMTP {
                 insertVar(txt) { this.compose.body += txt; },
                 wrapText(tag) { const ta = this.$refs.editor; const start = ta.selectionStart; const end = ta.selectionEnd; const text = ta.value; this.compose.body = `${text.substring(0, start)}<${tag}>${text.substring(start, end)}</${tag}>${text.substring(end)}`; },
                 addLink() { const url = prompt('Enter URL:'); if(url) { const ta = this.$refs.editor; const start = ta.selectionStart; const end = ta.selectionEnd; const sel = ta.value.substring(start, end) || url; this.compose.body = ta.value.substring(0, start) + `<a href="${url}">${sel}</a>` + ta.value.substring(end); } },
-                checkSpam() { const spamWords = ['free', 'money', 'guarantee', '$$$', '100%']; const text = (this.compose.subject + ' ' + this.compose.body).toLowerCase(); let hits = 0; spamWords.forEach(w => { if(text.includes(w)) hits++; }); this.spamScore = Math.min(100, hits * 10); },
+                checkSpam() { if(!this.isPro) return; const spamWords = ['free', 'money', 'guarantee', '$$$', '100%']; const text = (this.compose.subject + ' ' + this.compose.body).toLowerCase(); let hits = 0; spamWords.forEach(w => { if(text.includes(w)) hits++; }); this.spamScore = Math.min(100, hits * 10); },
                 log(type, msg) { const time = new Date().toLocaleTimeString('en-US', { hour12: false }); this.logs.unshift({ type, msg, time }); if (this.logs.length > 50) this.logs.pop(); }
             }
         }
