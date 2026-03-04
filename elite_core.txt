@@ -1,9 +1,9 @@
 <?php
 /**
- * ELITE SENDER v7.4 - THE APEX CORE
+ * ELITE SENDER v7.5 - THE APEX CORE
  * ----------------------------------------------------------------
  * ARCHITECTURE: High-Performance WAL, Micro-Batching, OTA Ready.
- * UX/UI: Verify Loading States, 24Hr Auto-Lock, Audit Integrity.
+ * UX/UI: 3-Day Persistent Login, Resource-Optimized Heartbeat.
  * ----------------------------------------------------------------
  */
 
@@ -14,7 +14,11 @@ if (!extension_loaded('openssl')) $errors[] = "OpenSSL Missing";
 if (!is_writable(__DIR__)) $errors[] = "Folder not writable (chmod 755)";
 if (!empty($errors)) die('<div style="background:#020617;color:#ef4444;height:100vh;display:flex;justify-content:center;align-items:center;font-family:sans-serif;"><ul>' . implode('', array_map(fn($e)=>"<li>$e</li>", $errors)) . '</ul></div>');
 
+// ELITE FIX: 3-Day Persistent Sessions (259,200 seconds)
+ini_set('session.gc_maxlifetime', 259200);
+session_set_cookie_params(259200);
 session_start();
+
 ini_set('display_errors', 0);
 ini_set('max_execution_time', 0);
 ini_set('memory_limit', '512M');
@@ -31,7 +35,7 @@ class License {
         if ($key && $expiry && time() < $expiry) return true;
         if ($key) {
             $domain = strtolower($_SERVER['HTTP_HOST']);
-            $domain = preg_replace('/^www\./', '', $domain); // Strip www. for reliable caching
+            $domain = preg_replace('/^www\./', '', $domain);
             
             $url = "https://tools.mywebvas.com/verify.php?action=check&key=" . urlencode($key) . "&domain=" . urlencode($domain);
             $ctx = stream_context_create(['http' => ['timeout' => 5]]);
@@ -146,8 +150,8 @@ class Security {
     }
     public static function getBaseUrl() { $protocol = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' || $_SERVER['SERVER_PORT'] == 443) ? "https://" : "http://"; return $protocol . $_SERVER['HTTP_HOST'] . strtok($_SERVER["REQUEST_URI"], '?'); }
     public static function checkSession() {
-        // ELITE FIX: 24 Hour Inactivity Auto-Lock (86400 seconds)
-        if (isset($_SESSION['last_activity']) && (time() - $_SESSION['last_activity'] > 86400)) { session_unset(); session_destroy(); return false; }
+        // ELITE FIX: 3-Day (72 Hour) Inactivity Auto-Lock (259,200 seconds)
+        if (isset($_SESSION['last_activity']) && (time() - $_SESSION['last_activity'] > 259200)) { session_unset(); session_destroy(); return false; }
         if (isset($_SESSION['ua']) && $_SESSION['ua'] !== $_SERVER['HTTP_USER_AGENT']) { session_unset(); session_destroy(); return false; }
         $_SESSION['last_activity'] = time(); return isset($_SESSION['elite_auth']) && $_SESSION['elite_auth'] === true;
     }
@@ -283,7 +287,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $stmt = $db->prepare("INSERT OR REPLACE INTO config (key, value) VALUES ('app_password', :pass)");
                 $stmt->bindValue(':pass', password_hash($input['password'], PASSWORD_BCRYPT)); $stmt->execute();
                 session_regenerate_id(true); $_SESSION['elite_auth'] = true; $_SESSION['ua'] = $_SERVER['HTTP_USER_AGENT'];
-                // ELITE FIX: Log initial setup audit trail
                 $db->exec("INSERT INTO login_logs (ip, user_agent) VALUES ('{$_SERVER['REMOTE_ADDR']}', '{$_SERVER['HTTP_USER_AGENT']}')");
                 if (file_exists(__DIR__ . '/reset.lock')) unlink(__DIR__ . '/reset.lock'); echo json_encode(['status' => 'success']); break;
             case 'check_auth':
@@ -492,13 +495,12 @@ class EliteSMTP {
             <div class="bg-black/20 p-3 rounded-xl border border-white/5 mb-3">
                 <div class="flex justify-between items-center mb-2"><span class="text-[10px] text-slate-400 font-bold uppercase tracking-wider">License Key</span><span class="text-[10px] font-bold px-2 py-0.5 rounded" :class="isPro ? 'bg-accent-400/20 text-accent-400 border border-accent-500/30' : 'bg-slate-800 text-slate-400'" x-text="isPro ? (licensePlan || 'PRO') : 'FREE'"></span></div>
                 <input type="text" x-model="licenseKey" class="w-full glass-input text-xs p-2 rounded mb-2 font-mono" placeholder="ELITE-XXXX-XXXX" :disabled="isPro">
-                
                 <button x-show="!isPro" @click="activateLicense" :disabled="isVerifying" class="w-full py-1.5 bg-primary-600/20 hover:bg-primary-600/40 text-primary-400 text-xs font-bold rounded transition border border-primary-500/20 disabled:opacity-50">
                     <span x-show="!isVerifying">Verify Key</span>
                     <span x-show="isVerifying"><i class="bi bi-arrow-repeat animate-spin"></i> Verifying...</span>
                 </button>
             </div>
-            <div class="flex items-center justify-between px-1"><span class="text-[10px] text-slate-500">v7.4 Cloud Core</span><span x-text="lastLogin" class="text-[8px] text-primary-500/80"></span></div>
+            <div class="flex items-center justify-between px-1"><span class="text-[10px] text-slate-500">v7.5 Cloud Core</span><span x-text="lastLogin" class="text-[8px] text-primary-500/80"></span></div>
         </div>
     </aside>
 
@@ -682,8 +684,8 @@ class EliteSMTP {
                 triggerUpgrade(title) { this.upgradeTitle = title; this.showUpgradeModal = true; },
                 async init() { 
                     await this.checkAuth(); 
-                    // ELITE FIX: 24Hr Auto-Lock Heartbeat Ping (Checks every 5 minutes)
-                    setInterval(async () => { if(this.authState.auth) await this.checkAuth(); }, 300000); 
+                    // ELITE FIX: 30-Minute Heartbeat (Resource Efficient)
+                    setInterval(async () => { if(this.authState.auth) await this.checkAuth(); }, 1800000); 
                 },
                 async checkAuth() { 
                     const res = await this.api('check_auth'); 
@@ -691,7 +693,6 @@ class EliteSMTP {
                     this.authState = { setup: res.is_setup, auth: res.is_auth, recovery: res.recovery_mode, csrf: res.csrf }; 
                     this.authBtnText = this.authState.recovery ? 'Reset Password' : (this.authState.setup ? 'Unlock' : 'Initialize'); 
                     this.isPro = res?.is_pro || false; 
-                    // ELITE FIX: Cryptographic License Masking
                     this.licenseKey = res?.license_key ? res.license_key.substring(0, 9) + '****-****-****' : ''; 
                     this.licensePlan = res?.license_plan || ''; 
                     if (this.authState.auth) this.loadSystem(); 
@@ -701,7 +702,6 @@ class EliteSMTP {
                 notify(msg, type = 'success') { const id = Date.now(); this.toasts.push({ id, msg, type, show: true }); setTimeout(() => { this.toasts = this.toasts.filter(t => t.id !== id); }, 3000); },
                 async api(action, data = {}) { this.loading = true; try { const res = await fetch('', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action, csrf: this.authState.csrf, ...data }) }); if (res.status === 401) { this.authState.auth = false; return null; } if (res.status === 403) { const err = await res.json(); this.notify(err.msg, 'error'); this.checkAuth(); return null; } return await res.json(); } catch (e) { this.notify(e.message, 'error'); return null; } finally { this.loading = false; } },
                 sendNow() { 
-                    // ELITE FIX: Smart Redirect if no SMTP is configured
                     if (this.profiles.length === 0) {
                         if(confirm('No Email Server (SMTP) configured. Add one now?')) { this.activeTab = 'settings'; this.showAddSmtp = true; }
                         return;
@@ -725,7 +725,6 @@ class EliteSMTP {
                 async deleteSmtp(id) { if(confirm('Remove server?')) { await this.api('delete_smtp', {id}); this.loadConfig(); this.notify('Server Removed', 'success'); } },
                 async saveImap() { const res = await this.api('save_imap', this.imap); if(res?.status === 'success') this.notify('Settings Saved', 'success'); },
                 async activateLicense() { 
-                    // ELITE FIX: UI Loading State
                     if(!this.licenseKey) return; 
                     this.isVerifying = true;
                     const res = await this.api('activate_license', { key: this.licenseKey }); 
