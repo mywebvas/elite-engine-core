@@ -1,9 +1,9 @@
 <?php
 /**
- * ELITE SENDER v7.0 - THE APEX CORE
+ * ELITE SENDER v7.3 - THE APEX CORE
  * ----------------------------------------------------------------
  * ARCHITECTURE: High-Performance WAL, Micro-Batching, OTA Ready.
- * MARKETING: 7-Pillar Freemium Upsell Engine & Cryptographic Locking.
+ * UX/UI: Frictionless Onboarding, De-Jargonized, Smart Redirects.
  * ----------------------------------------------------------------
  */
 
@@ -169,7 +169,7 @@ if (isset($_GET['action'])) {
             $db->exec("INSERT OR IGNORE INTO suppressions (email) VALUES ('$email')");
             $db->exec("DELETE FROM queue WHERE recipient = '$email' AND status = 'pending'");
         }
-        echo "<!DOCTYPE html><html class='dark'><body style='background:#0F172A;color:white;font-family:sans-serif;display:flex;height:100vh;justify-content:center;align-items:center;'><div style='text-align:center;padding:40px;background:rgba(255,255,255,0.05);border-radius:20px;'><h2 style='color:#4ade80'>Unsubscribed</h2><p>$email removed.</p></div></body></html>"; exit;
+        echo "<!DOCTYPE html><html class='dark'><body style='background:#0F172A;color:white;font-family:sans-serif;display:flex;height:100vh;justify-content:center;align-items:center;'><div style='text-align:center;padding:40px;background:rgba(255,255,255,0.05);border-radius:20px;'><h2 style='color:#4ade80'>Unsubscribed Successfully</h2><p>$email has been removed from this list.</p></div></body></html>"; exit;
     }
     if ($_GET['action'] === 'api') {
         if (!License::check($db)) die(json_encode(['status'=>'error','msg'=>'Pro License Required']));
@@ -303,7 +303,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $to = filter_var($input['to'], FILTER_VALIDATE_EMAIL); if (!$to) { echo json_encode(['status'=>'error', 'msg'=>'Invalid Email']); break; }
                 $stmt = $db->prepare("SELECT * FROM smtp_profiles WHERE id = :id"); $stmt->bindValue(':id', (int)$input['id']); $profile = $stmt->execute()->fetchArray(SQLITE3_ASSOC);
                 $smtp = new EliteSMTP($profile['host'], (int)$profile['port']);
-                if ($smtp->send($profile['user'], Security::decrypt($profile['pass']), $profile['from_email'], $profile['from_name'], $to, "Elite Test", "<h1>Connection OK</h1>", '', [], $profile['reply_to'], $profile['bimi_url'])) echo json_encode(['status' => 'success', 'msg' => 'Connected!']); else echo json_encode(['status' => 'error', 'msg' => $smtp->getLastError()]); break;
+                if ($smtp->send($profile['user'], Security::decrypt($profile['pass']), $profile['from_email'], $profile['from_name'], $to, "Elite Test", "<h1>Connection OK</h1>", '', [], $profile['reply_to'], $profile['bimi_url'])) echo json_encode(['status' => 'success', 'msg' => 'Connected successfully!']); else echo json_encode(['status' => 'error', 'msg' => $smtp->getLastError()]); break;
             case 'add_queue':
                 $stmt = $db->prepare("INSERT OR IGNORE INTO queue (recipient, name) VALUES (:email, :name)"); $chk = $db->prepare("SELECT 1 FROM suppressions WHERE email = :email");
                 $count = 0; $db->exec('BEGIN'); $lines = preg_split('/[\r\n]+/', $input['recipients']);
@@ -313,10 +313,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 } $db->exec('COMMIT'); echo json_encode(['status' => 'success', 'count' => $count]); break;
             case 'process_batch':
                 if (!$isPro && !empty($input['attachments'])) { die(json_encode(['status'=>'error','msg'=>'Attachments are a Pro Feature.'])); }
-                if (!empty($input['attachments'])) { $size = 0; foreach($input['attachments'] as $a) $size+=strlen($a['data']); if($size > 5242880) die(json_encode(['status'=>'error','msg'=>'Over 5MB'])); }
+                if (!empty($input['attachments'])) { $size = 0; foreach($input['attachments'] as $a) $size+=strlen($a['data']); if($size > 5242880) die(json_encode(['status'=>'error','msg'=>'Total attachments exceed 5MB.'])); }
                 $profiles = []; $res = $db->query("SELECT * FROM smtp_profiles WHERE active=1 AND cooldown_until < " . time()); while ($row = $res->fetchArray(SQLITE3_ASSOC)) $profiles[] = $row;
                 if (!$isPro && count($profiles) > 1) $profiles = array_slice($profiles, 0, 1);
-                if (empty($profiles)) die(json_encode(['status'=>'error','msg'=>'No Healthy SMTP']));
+                if (empty($profiles)) die(json_encode(['status'=>'error','msg'=>'No healthy Email Server (SMTP) found.']));
                 $limit = (int)$input['limit']; $res = $db->query("SELECT * FROM queue WHERE status='pending' LIMIT $limit"); $processed = []; $baseUrl = Security::getBaseUrl(); $i=0;
                 while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
                     $profile = $profiles[$i % count($profiles)]; $smtp = new EliteSMTP($profile['host'], $profile['port']);
@@ -338,7 +338,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             case 'resend_non_openers': if(!$isPro) die(json_encode(['status'=>'error','msg'=>'Pro Feature'])); $db->exec("UPDATE queue SET status='pending' WHERE status='sent' AND read_at IS NULL"); echo json_encode(['status'=>'success']); break;
             case 'optimize_db': $db->optimize(); echo json_encode(['status'=>'success']); break;
             case 'change_password':
-                $old = trim($input['old_password'] ?? ''); $new = trim($input['new_password'] ?? ''); if (empty($old) || empty($new)) { echo json_encode(['status'=>'error','msg'=>'Empty fields']); break; }
+                $old = trim($input['old_password'] ?? ''); $new = trim($input['new_password'] ?? ''); if (empty($old) || empty($new)) { echo json_encode(['status'=>'error','msg'=>'Fields cannot be empty']); break; }
                 $hash = (string)$db->prepare("SELECT value FROM config WHERE key = 'app_password'")->execute()->fetchArray(SQLITE3_NUM)[0];
                 if (!empty($hash) && password_verify($old, $hash)) { $upd = $db->prepare("INSERT OR REPLACE INTO config (key, value) VALUES ('app_password', :pass)"); $upd->bindValue(':pass', password_hash($new, PASSWORD_BCRYPT)); $upd->execute(); echo json_encode(['status' => 'success']); } else { echo json_encode(['status' => 'error', 'msg' => 'Incorrect Password']); } break;
             case 'save_template':
@@ -436,7 +436,7 @@ class EliteSMTP {
             <ul class="space-y-3 mb-8 text-sm text-slate-300">
                 <li class="flex gap-3"><i class="bi bi-check-circle-fill text-accent-400"></i> <span><strong>4x Turbo Engine:</strong> Send up to 100,000 emails/hour.</span></li>
                 <li class="flex gap-3"><i class="bi bi-check-circle-fill text-accent-400"></i> <span><strong>Unlimited SMTPs:</strong> Auto-rotate IPs to completely bypass spam filters.</span></li>
-                <li class="flex gap-3"><i class="bi bi-check-circle-fill text-accent-400"></i> <span><strong>IMAP Bounce Shield:</strong> Auto-clean dead emails automatically.</span></li>
+                <li class="flex gap-3"><i class="bi bi-check-circle-fill text-accent-400"></i> <span><strong>Bounce Shield:</strong> Auto-clean dead emails automatically.</span></li>
                 <li class="flex gap-3"><i class="bi bi-check-circle-fill text-accent-400"></i> <span><strong>Smart CSV & MX:</strong> Bulk import with live DNS checking.</span></li>
                 <li class="flex gap-3"><i class="bi bi-check-circle-fill text-accent-400"></i> <span><strong>Campaign Attachments:</strong> Send PDFs and media directly.</span></li>
                 <li class="flex gap-3"><i class="bi bi-check-circle-fill text-accent-400"></i> <span><strong>Spam AI & Retargeting:</strong> Live scoring & 1-click resend to ghosts.</span></li>
@@ -488,7 +488,7 @@ class EliteSMTP {
                 <input type="text" x-model="licenseKey" class="w-full glass-input text-xs p-2 rounded mb-2 font-mono" placeholder="ELITE-XXXX-XXXX" :disabled="isPro">
                 <button x-show="!isPro" @click="activateLicense" class="w-full py-1.5 bg-primary-600/20 hover:bg-primary-600/40 text-primary-400 text-xs font-bold rounded transition border border-primary-500/20">Verify Key</button>
             </div>
-            <div class="flex items-center justify-between px-1"><span class="text-[10px] text-slate-500">v7.0 Cloud Core</span><span x-text="lastLogin" class="text-[8px] text-primary-500/80"></span></div>
+            <div class="flex items-center justify-between px-1"><span class="text-[10px] text-slate-500">v7.3 Cloud Core</span><span x-text="lastLogin" class="text-[8px] text-primary-500/80"></span></div>
         </div>
     </aside>
 
@@ -501,6 +501,8 @@ class EliteSMTP {
         <div class="flex-1 overflow-y-auto p-4 md:p-8 custom-scrollbar pb-safe relative">
             
             <div x-show="activeTab === 'dashboard'" x-transition.opacity class="space-y-6">
+                <div x-show="profiles.length === 0" class="p-6 rounded-2xl border border-dashed border-primary-500/30 bg-primary-500/5 text-center mb-6"><div class="w-12 h-12 bg-primary-500/20 rounded-full flex items-center justify-center mx-auto mb-3 text-primary-400"><i class="bi bi-gear-fill text-xl"></i></div><h3 class="text-white font-bold mb-1">Setup Required</h3><p class="text-sm text-slate-400 mb-4">Add your first Email Server (SMTP) to start sending.</p><button @click="activeTab = 'settings'; showAddSmtp = true;" class="px-4 py-2 bg-primary-600 hover:bg-primary-500 text-white rounded-lg text-sm font-medium transition">Configure Email Server</button></div>
+                
                 <div class="grid grid-cols-2 md:grid-cols-5 gap-4">
                     <div class="glass-panel p-4 rounded-2xl hover:bg-white/5 transition"><div class="text-slate-400 text-xs font-medium">Total</div><div class="text-2xl font-bold text-white" x-text="stats.total">0</div></div>
                     <div class="glass-panel p-4 rounded-2xl hover:bg-white/5 transition"><div class="text-slate-400 text-xs font-medium">Pending</div><div class="text-2xl font-bold text-amber-400" x-text="stats.pending">0</div></div>
@@ -511,25 +513,25 @@ class EliteSMTP {
                 
                 <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
                     <div class="glass-panel rounded-2xl p-6 flex flex-col gap-4">
-                        <h3 class="text-lg font-semibold text-white flex items-center gap-2"><i class="bi bi-speedometer2 text-primary-400"></i> Turbo Engine</h3>
+                        <h3 class="text-lg font-semibold text-white flex items-center gap-2"><i class="bi bi-speedometer2 text-primary-400"></i> Sending Speed (Turbo)</h3>
                         <div class="p-4 rounded-xl bg-slate-900/50 border border-white/5 relative">
                             <label class="text-xs text-slate-400 uppercase font-bold flex justify-between">Threads <span x-show="!isPro" class="text-primary-400"><i class="bi bi-lock-fill"></i> Pro</span></label>
                             <input type="range" min="1" max="4" x-model="threads" class="w-full h-2 bg-slate-700 rounded-lg cursor-pointer mt-2 accent-primary-500" @change="if(!isPro && threads > 1) { threads = 1; triggerUpgrade('Unlock Multi-Threading'); }">
                             <div class="flex justify-between text-xs text-slate-500 mt-1"><span>1x</span><span x-text="threads + 'x Turbo'" class="text-primary-400 font-bold"></span><span>4x</span></div>
                         </div>
-                        <div class="p-4 rounded-xl bg-slate-900/50 border border-white/5"><label class="text-xs text-slate-400 uppercase font-bold">Batch Size</label><input type="range" min="1" max="20" x-model="batchSize" class="w-full h-2 bg-slate-700 rounded-lg cursor-pointer mt-2 accent-primary-500"><div class="flex justify-between text-xs text-slate-500 mt-1"><span>1</span><span x-text="batchSize" class="font-mono"></span><span>20</span></div></div>
-                        <button @click="processQueue()" :disabled="isProcessing || stats.pending == 0" class="w-full py-4 rounded-xl font-bold text-lg transition-all flex items-center justify-center gap-2 group" :class="isProcessing ? 'bg-slate-700 cursor-not-allowed' : 'bg-gradient-to-r from-primary-600 to-primary-500 hover:from-primary-500 text-white shadow-lg shadow-primary-500/20'"><span x-show="!isProcessing" class="group-hover:scale-105 transition-transform"><i class="bi bi-rocket-takeoff-fill"></i> Ignite Campaign</span><span x-show="isProcessing" class="flex items-center gap-2"><i class="animate-spin bi bi-arrow-repeat"></i> LivePulse Active...</span></button>
+                        <div class="p-4 rounded-xl bg-slate-900/50 border border-white/5"><label class="text-xs text-slate-400 uppercase font-bold">Emails Per Batch</label><input type="range" min="1" max="20" x-model="batchSize" class="w-full h-2 bg-slate-700 rounded-lg cursor-pointer mt-2 accent-primary-500"><div class="flex justify-between text-xs text-slate-500 mt-1"><span>1</span><span x-text="batchSize" class="font-mono"></span><span>20</span></div></div>
+                        <button @click="processQueue()" :disabled="isProcessing || stats.pending == 0" class="w-full py-4 rounded-xl font-bold text-lg transition-all flex items-center justify-center gap-2 group" :class="isProcessing ? 'bg-slate-700 cursor-not-allowed' : 'bg-gradient-to-r from-primary-600 to-primary-500 hover:from-primary-500 text-white shadow-lg shadow-primary-500/20'"><span x-show="!isProcessing" class="group-hover:scale-105 transition-transform"><i class="bi bi-rocket-takeoff-fill"></i> Start Sending</span><span x-show="isProcessing" class="flex items-center gap-2"><i class="animate-spin bi bi-arrow-repeat"></i> Sending Emails...</span></button>
                         <div class="flex gap-2"><button @click="retryFailed()" class="flex-1 py-3 rounded-xl border border-red-500/20 text-red-400 text-xs font-medium hover:bg-red-500/10 transition">Retry Failed</button><button @click="clearQueue()" class="flex-1 py-3 rounded-xl text-slate-500 text-xs hover:text-white transition hover:bg-white/5">Clear Queue</button></div>
                         <button x-show="stats.sent > 0" @click="isPro ? resendNonOpeners() : triggerUpgrade('Unlock Retargeting')" class="w-full py-3 rounded-xl bg-indigo-600/20 border border-indigo-500/30 text-indigo-400 text-sm hover:bg-indigo-600/30 transition flex items-center justify-center gap-2"><i class="bi" :class="isPro ? 'bi-recycle' : 'bi-lock-fill'"></i> Resend to Non-Openers</button>
                     </div>
                     
                     <div class="lg:col-span-2 space-y-6">
                         <div class="glass-panel rounded-2xl flex flex-col overflow-hidden h-[240px]">
-                            <div class="bg-black/40 px-4 py-3 border-b border-white/5 flex justify-between items-center"><span class="text-slate-400 text-xs font-mono uppercase tracking-wider">Live Terminal</span><div class="flex gap-1.5"><div class="w-2 h-2 rounded-full bg-red-500/50"></div><div class="w-2 h-2 rounded-full bg-yellow-500/50"></div><div class="w-2 h-2 rounded-full bg-green-500/50"></div></div></div>
+                            <div class="bg-black/40 px-4 py-3 border-b border-white/5 flex justify-between items-center"><span class="text-slate-400 text-xs font-mono uppercase tracking-wider">Live Activity Log</span><div class="flex gap-1.5"><div class="w-2 h-2 rounded-full bg-red-500/50"></div><div class="w-2 h-2 rounded-full bg-yellow-500/50"></div><div class="w-2 h-2 rounded-full bg-green-500/50"></div></div></div>
                             <div class="flex-1 bg-[#0a0f1c] p-4 overflow-y-auto space-y-2 font-mono text-xs md:text-sm" id="terminalLog"><template x-for="log in logs"><div class="flex gap-3 animate-fade-in"><span class="text-slate-600 shrink-0 select-none" x-text="log.time"></span><span :class="{'text-accent-400': log.type==='success', 'text-red-400': log.type==='error', 'text-blue-400': log.type==='info'}" x-text="log.msg"></span></div></template></div>
                         </div>
                         <div class="glass-panel rounded-2xl p-4 h-[220px] overflow-hidden">
-                            <h3 class="text-sm font-bold text-white mb-4 border-b border-white/5 pb-2">🏆 VIP Leaderboard (Score)</h3>
+                            <h3 class="text-sm font-bold text-white mb-4 border-b border-white/5 pb-2">🏆 VIP Leaderboard (Top Clickers)</h3>
                             <div class="overflow-y-auto h-full pb-4">
                                 <template x-for="vip in vips"><div class="flex justify-between items-center py-2 border-b border-white/5 last:border-0"><div class="flex items-center gap-3"><div class="w-8 h-8 rounded-full bg-gradient-to-br from-yellow-400 to-yellow-600 flex items-center justify-center text-black font-bold text-xs"><i class="bi bi-star-fill"></i></div><span class="text-sm text-slate-300" x-text="vip.recipient"></span></div><span class="text-lg font-bold text-yellow-400" x-text="vip.score"></span></div></template>
                                 <div x-show="vips.length === 0" class="text-center text-slate-500 text-xs mt-10">No VIP activity yet.</div>
@@ -542,7 +544,7 @@ class EliteSMTP {
             <div x-show="activeTab === 'growth'" x-transition.opacity>
                 <div class="max-w-3xl mx-auto glass-panel p-8 rounded-2xl relative overflow-hidden">
                     <div x-show="!isPro" class="pro-overlay">
-                        <i class="bi bi-magnet-fill text-4xl text-primary-400 mb-3"></i><h2 class="text-2xl font-bold text-white mb-2">Automate Lead Capture</h2><p class="text-slate-300 mb-6 max-w-sm">Unlock the Nexus API to embed beautiful signup forms directly on your website. Emails flow straight into your queue instantly.</p><button @click="triggerUpgrade('Unlock API Forms')" class="px-8 py-3 bg-primary-600 hover:bg-primary-500 text-white rounded-full font-bold shadow-lg transition">Upgrade to Pro</button>
+                        <i class="bi bi-magnet-fill text-4xl text-primary-400 mb-3"></i><h2 class="text-2xl font-bold text-white mb-2">Automate Lead Capture</h2><p class="text-slate-300 mb-6 max-w-sm">Unlock the API to embed beautiful signup forms directly on your website. Emails flow straight into your queue instantly.</p><button @click="triggerUpgrade('Unlock API Forms')" class="px-8 py-3 bg-primary-600 hover:bg-primary-500 text-white rounded-full font-bold shadow-lg transition">Upgrade to Pro</button>
                     </div>
                     <div :class="!isPro ? 'blur-sm opacity-50 select-none' : ''">
                         <h3 class="text-xl font-bold text-white mb-4">Embedded Growth Form</h3><p class="text-slate-400 text-sm mb-6">Copy and paste this HTML code onto your website to collect subscribers directly into Elite Sender.</p>
@@ -556,18 +558,18 @@ class EliteSMTP {
 
             <div x-show="activeTab === 'compose'" x-transition.opacity class="flex flex-col md:flex-row gap-6 h-auto md:h-full">
                 <div class="w-full md:w-1/2 flex flex-col gap-4">
-                    <div class="space-y-1"><label class="text-xs text-slate-400 font-bold uppercase ml-1">Subject (Spintax Supported)</label><div class="flex flex-col sm:flex-row gap-2"><input type="text" x-model="compose.subject" class="w-full px-4 py-3 rounded-xl glass-input" placeholder="{Hello|Hi} Friend..."><div class="flex gap-2"><button @click="sendNow()" class="flex-1 sm:flex-none px-6 bg-gradient-to-r from-accent-600 to-accent-500 text-white rounded-xl font-bold shadow-lg hover:shadow-accent-500/30 transition whitespace-nowrap flex items-center justify-center gap-2" :disabled="isProcessing" title="Ctrl+Enter"><i class="bi bi-send-fill"></i> Send</button><button @click="saveCampaign()" class="px-4 bg-white/5 hover:bg-white/10 rounded-xl border border-white/10 text-white transition" title="Save Draft (Ctrl+S)"><i class="bi bi-save"></i></button></div></div></div>
+                    <div class="space-y-1"><label class="text-xs text-slate-400 font-bold uppercase ml-1">Email Subject</label><div class="flex flex-col sm:flex-row gap-2"><input type="text" x-model="compose.subject" class="w-full px-4 py-3 rounded-xl glass-input" placeholder="{Hello|Hi} Friend..."><div class="flex gap-2"><button @click="sendNow()" class="flex-1 sm:flex-none px-6 bg-gradient-to-r from-accent-600 to-accent-500 text-white rounded-xl font-bold shadow-lg hover:shadow-accent-500/30 transition whitespace-nowrap flex items-center justify-center gap-2" :disabled="isProcessing" title="Ctrl+Enter"><i class="bi bi-send-fill"></i> Send</button><button @click="saveCampaign()" class="px-4 bg-white/5 hover:bg-white/10 rounded-xl border border-white/10 text-white transition" title="Save Draft (Ctrl+S)"><i class="bi bi-save"></i></button></div></div></div>
                     <div x-show="campaigns.length > 0" class="glass-input rounded-xl p-2 max-h-32 overflow-y-auto custom-scrollbar"><div class="text-[10px] text-slate-500 px-2 pb-1 uppercase font-bold tracking-wider">Saved Drafts</div><template x-for="c in campaigns"><div class="flex justify-between items-center p-2 hover:bg-white/5 rounded cursor-pointer group transition"><span @click="loadCampaign(c)" x-text="c.subject || '(No Subject)'" class="truncate text-sm text-slate-300 group-hover:text-white"></span><i @click="deleteCampaign(c.id)" class="bi bi-trash text-red-400 opacity-0 group-hover:opacity-100 transition"></i></div></template></div>
                     <div class="flex-1 flex flex-col space-y-1 min-h-[300px]">
-                        <div class="flex justify-between px-1"><label class="text-xs text-slate-400 font-bold uppercase">HTML Body (Spintax Supported)</label><div class="flex gap-2 text-xs font-medium bg-white/5 px-2 py-1 rounded-lg"><span class="cursor-pointer hover:text-white transition" @click="wrapText('b')" title="Bold"><b>B</b></span><span class="cursor-pointer hover:text-white transition" @click="wrapText('i')" title="Italic"><i>I</i></span><span class="cursor-pointer hover:text-white transition" @click="addLink()" title="Link"><i class="bi bi-link"></i></span><span class="cursor-pointer hover:text-white transition" @click="showPreview = !showPreview" title="Data Preview"><i class="bi bi-eye"></i></span></div></div>
+                        <div class="flex justify-between px-1"><label class="text-xs text-slate-400 font-bold uppercase">Email Body (HTML)</label><div class="flex gap-2 text-xs font-medium bg-white/5 px-2 py-1 rounded-lg"><span class="cursor-pointer hover:text-white transition" @click="wrapText('b')" title="Bold"><b>B</b></span><span class="cursor-pointer hover:text-white transition" @click="wrapText('i')" title="Italic"><i>I</i></span><span class="cursor-pointer hover:text-white transition" @click="addLink()" title="Link"><i class="bi bi-link"></i></span><span class="cursor-pointer hover:text-white transition" @click="showPreview = !showPreview" title="Data Preview"><i class="bi bi-eye"></i></span></div></div>
                         <textarea x-ref="editor" x-model="compose.body" @input="checkSpam();saveDraft()" class="flex-1 w-full p-4 rounded-xl glass-input font-mono text-sm leading-relaxed focus:ring-1 focus:ring-primary-500/50 resize-none" placeholder="Hello {name}, check this {deal|offer}..."></textarea>
                         <div class="flex justify-between items-center text-xs text-primary-400 px-1 mt-1">
                             <div class="space-x-3 flex items-center">
                                 <span class="cursor-pointer hover:text-white transition" @click="insertVar('{name}')">+ Name</span>
                                 <span class="cursor-pointer hover:text-white transition" @click="insertVar('{email}')">+ Email</span>
-                                <label class="cursor-pointer flex items-center gap-1 hover:text-white transition" @click.prevent="isPro ? $refs.fileInput.click() : triggerUpgrade('Unlock Attachments')">
-                                    <i class="bi" :class="isPro ? 'bi-paperclip' : 'bi-lock-fill'"></i> Attach
-                                    <input type="file" multiple class="hidden" x-ref="fileInput" @change="handleAttachments">
+                                <label class="cursor-pointer flex items-center gap-1 hover:text-white transition" @click="if(!isPro) { $event.preventDefault(); triggerUpgrade('Unlock Attachments'); }">
+                                    <i class="bi" :class="isPro ? 'bi-paperclip' : 'bi-lock-fill'"></i> Attach File
+                                    <input type="file" multiple class="hidden" @change="handleAttachments">
                                 </label>
                                 <span x-show="attachments.length > 0" x-text="attachments.length" class="text-white bg-primary-600/50 px-1.5 rounded-full text-[10px]"></span>
                             </div>
@@ -586,35 +588,35 @@ class EliteSMTP {
             <div x-show="activeTab === 'settings'" x-transition.opacity>
                 <div class="max-w-2xl mx-auto glass-panel p-6 md:p-8 rounded-2xl space-y-8">
                     <div>
-                        <div class="flex justify-between items-center mb-4 border-b border-white/5 pb-2"><h3 class="text-xl font-semibold text-white">SMTP Rotation Network</h3><button @click="if(!isPro && profiles.length >= 1) { triggerUpgrade('Unlimited SMTP Rotation'); } else { showAddSmtp = true; }" class="px-3 py-1 bg-primary-600 rounded text-xs text-white hover:bg-primary-500 transition">+ Add Node</button></div>
+                        <div class="flex justify-between items-center mb-4 border-b border-white/5 pb-2"><h3 class="text-xl font-semibold text-white">Email Servers (SMTP)</h3><button @click="if(!isPro && profiles.length >= 1) { triggerUpgrade('Unlimited SMTP Rotation'); } else { showAddSmtp = true; }" class="px-3 py-1 bg-primary-600 rounded text-xs text-white hover:bg-primary-500 transition">+ Add SMTP</button></div>
                         <div x-show="!isPro && profiles.length > 0" class="mb-4 p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-xs text-red-300 flex items-center gap-2"><i class="bi bi-exclamation-triangle-fill text-red-400"></i> Free Version limited to 1 SMTP. Upgrade to add unlimited servers.</div>
                         <div class="space-y-2 mb-4">
                             <template x-for="p in profiles"><div class="flex justify-between items-center p-3 bg-white/5 rounded-lg border border-white/5 hover:border-primary-500/20 transition group"><div class="flex flex-col"><div class="flex items-center gap-2"><span class="text-sm font-bold text-white" x-text="p.host"></span><span x-show="p.cooldown" class="px-2 py-0.5 bg-red-500/20 text-red-400 text-[10px] rounded animate-pulse">COOLDOWN</span></div><span class="text-xs text-slate-400" x-text="p.from_email"></span></div><div class="flex gap-2 opacity-100 sm:opacity-50 group-hover:opacity-100 transition"><button @click="testSmtp(p.id)" class="text-accent-400 hover:text-accent-300 p-2" title="Test Connection"><i class="bi bi-lightning-charge-fill"></i></button><button @click="deleteSmtp(p.id)" class="text-red-400 hover:text-red-300 p-2" title="Remove"><i class="bi bi-trash"></i></button></div></div></template>
-                            <div x-show="profiles.length === 0" class="text-center text-sm text-slate-500 py-4 italic">No accounts linked.</div>
+                            <div x-show="profiles.length === 0" class="text-center text-sm text-slate-500 py-4 italic">No email servers added yet.</div>
                         </div>
                         <div x-show="showAddSmtp" class="bg-slate-900/50 p-4 rounded-xl space-y-3 border border-white/10" x-transition>
-                            <h4 class="text-sm font-bold text-white">New Account</h4>
+                            <h4 class="text-sm font-bold text-white">New Server Details</h4>
                             <div class="grid grid-cols-2 gap-3"><input type="text" x-model="newSmtp.host" class="glass-input px-3 py-2 rounded text-sm" placeholder="Host (e.g. smtp.gmail.com)"><input type="text" x-model="newSmtp.port" class="glass-input px-3 py-2 rounded text-sm" placeholder="Port (587)"></div>
-                            <div class="grid grid-cols-2 gap-3"><input type="text" x-model="newSmtp.user" class="glass-input px-3 py-2 rounded text-sm" placeholder="Username"><input type="password" x-model="newSmtp.pass" class="glass-input px-3 py-2 rounded text-sm" placeholder="Password"></div>
-                            <div class="grid grid-cols-2 gap-3"><input type="text" x-model="newSmtp.from_email" class="glass-input px-3 py-2 rounded text-sm" placeholder="From Email"><input type="text" x-model="newSmtp.from_name" class="glass-input px-3 py-2 rounded text-sm" placeholder="From Name"></div>
-                            <div class="grid grid-cols-2 gap-3"><input type="text" x-model="newSmtp.reply_to" class="glass-input w-full px-3 py-2 rounded text-sm" placeholder="Reply-To (Optional)"><input type="text" x-model="newSmtp.bimi_url" class="glass-input w-full px-3 py-2 rounded text-sm" placeholder="BIMI Logo URL (Optional)"></div>
-                            <div class="flex justify-end gap-2"><button @click="showAddSmtp = false" class="text-xs text-slate-400 hover:text-white transition">Cancel</button><button @click="addSmtp()" class="px-4 py-2 bg-accent-600 rounded text-sm text-white hover:bg-accent-500 transition">Save Account</button></div>
+                            <div class="grid grid-cols-2 gap-3"><input type="text" x-model="newSmtp.user" class="glass-input px-3 py-2 rounded text-sm" placeholder="Username / Email"><input type="password" x-model="newSmtp.pass" class="glass-input px-3 py-2 rounded text-sm" placeholder="Password / App Pass"></div>
+                            <div class="grid grid-cols-2 gap-3"><input type="text" x-model="newSmtp.from_email" class="glass-input px-3 py-2 rounded text-sm" placeholder="Sending Email"><input type="text" x-model="newSmtp.from_name" class="glass-input px-3 py-2 rounded text-sm" placeholder="Sender Name"></div>
+                            <div class="grid grid-cols-2 gap-3"><input type="text" x-model="newSmtp.reply_to" class="glass-input w-full px-3 py-2 rounded text-sm" placeholder="Reply-To (Optional)"><input type="text" x-model="newSmtp.bimi_url" class="glass-input w-full px-3 py-2 rounded text-sm" placeholder="Brand Logo URL (Optional)"></div>
+                            <div class="flex justify-end gap-2"><button @click="showAddSmtp = false" class="text-xs text-slate-400 hover:text-white transition">Cancel</button><button @click="addSmtp()" class="px-4 py-2 bg-accent-600 rounded text-sm text-white hover:bg-accent-500 transition">Save SMTP</button></div>
                         </div>
                     </div>
                     
                     <div class="relative overflow-hidden p-6 rounded-2xl border border-white/5 bg-black/10">
-                        <div x-show="!isPro" class="pro-overlay rounded-2xl"><i class="bi bi-shield-lock-fill text-4xl text-primary-400 mb-2"></i><h3 class="text-xl font-bold text-white">IMAP Guardian Engine</h3><p class="text-xs text-slate-300 mt-2 max-w-xs mx-auto mb-4">Automatically scan your inbox for bounced emails and suppress them to protect your sender reputation.</p><button @click="triggerUpgrade('Unlock IMAP Guardian')" class="px-6 py-2 bg-primary-600 hover:bg-primary-500 text-white rounded-full font-bold shadow transition text-sm">Upgrade to Pro</button></div>
+                        <div x-show="!isPro" class="pro-overlay rounded-2xl"><i class="bi bi-shield-lock-fill text-4xl text-primary-400 mb-2"></i><h3 class="text-xl font-bold text-white">Bounce Shield (Auto-Cleaner)</h3><p class="text-xs text-slate-300 mt-2 max-w-xs mx-auto mb-4">Automatically scan your inbox for bounced emails and suppress them to protect your sender reputation.</p><button @click="triggerUpgrade('Unlock Bounce Shield')" class="px-6 py-2 bg-primary-600 hover:bg-primary-500 text-white rounded-full font-bold shadow transition text-sm">Upgrade to Pro</button></div>
                         <div :class="!isPro ? 'blur-sm opacity-30 select-none' : ''">
-                            <h3 class="text-xl font-semibold text-white mb-4 border-b border-white/5 pb-2">Bounce Handler (IMAP)</h3>
+                            <h3 class="text-xl font-semibold text-white mb-4 border-b border-white/5 pb-2">Bounce Shield (IMAP Settings)</h3>
                             <div class="space-y-3"><div class="grid grid-cols-2 gap-3"><input type="text" x-model="imap.host" class="glass-input px-3 py-2 rounded text-sm" placeholder="IMAP Host"><input type="text" x-model="imap.port" class="glass-input px-3 py-2 rounded text-sm" placeholder="Port (993)"></div><div class="grid grid-cols-2 gap-3"><input type="text" x-model="imap.user" class="glass-input px-3 py-2 rounded text-sm" placeholder="Email"><input type="password" x-model="imap.pass" class="glass-input px-3 py-2 rounded text-sm" placeholder="Password"></div><div class="flex justify-end"><button @click="if(isPro) saveImap()" class="px-4 py-2 bg-primary-600 rounded text-sm text-white hover:bg-primary-500 transition">Save Configuration</button></div></div>
                         </div>
                     </div>
                     
-                    <div><h3 class="text-xl font-semibold text-white mb-4 border-b border-white/5 pb-2">Nexus API & Cron</h3><div class="space-y-4"><div class="p-4 bg-slate-900/50 rounded-xl border border-white/5"><p class="text-xs text-slate-400 mb-2">API Endpoint (POST):</p><code class="block w-full p-2 bg-black/30 text-accent-400 text-xs break-all rounded cursor-pointer select-all font-mono" x-text="config.api_url">Loading...</code></div><div class="flex justify-between items-center bg-white/5 p-3 rounded-lg"><span class="text-xs text-slate-400 font-mono truncate mr-2">Key: <span class="text-white" x-text="isPro ? config.api_key : 'PRO FEATURE LOCKED'"></span></span><button @click="isPro ? rotateApiKey() : triggerUpgrade('Unlock API Nexus')" class="text-[10px] text-primary-400 hover:text-white transition uppercase font-bold"><i class="bi" :class="isPro ? 'bi-arrow-repeat' : 'bi-lock-fill'"></i> Rotate</button></div><div class="p-4 bg-slate-900/50 rounded-xl border border-white/5"><p class="text-xs text-slate-400 mb-2">Cron URL (Sends + Cleans):</p><code class="block w-full p-2 bg-black/30 text-accent-400 text-xs break-all rounded cursor-pointer select-all font-mono" x-text="config.cron_url">Loading...</code></div></div></div>
-                    <div><h3 class="text-xl font-semibold text-white mb-4 border-b border-white/5 pb-2">Security Audit</h3><div class="bg-black/20 rounded-xl p-4 text-xs font-mono h-32 overflow-y-auto"><template x-for="l in loginLogs"><div class="flex justify-between py-1 border-b border-white/5"><span class="text-slate-300" x-text="l.timestamp"></span><span class="text-primary-400" x-text="l.ip"></span></div></template></div></div>
+                    <div><h3 class="text-xl font-semibold text-white mb-4 border-b border-white/5 pb-2">API & Automation</h3><div class="space-y-4"><div class="p-4 bg-slate-900/50 rounded-xl border border-white/5"><p class="text-xs text-slate-400 mb-2">API Endpoint (Connect Forms):</p><code class="block w-full p-2 bg-black/30 text-accent-400 text-xs break-all rounded cursor-pointer select-all font-mono" x-text="config.api_url">Loading...</code></div><div class="flex justify-between items-center bg-white/5 p-3 rounded-lg"><span class="text-xs text-slate-400 font-mono truncate mr-2">Secret Key: <span class="text-white" x-text="isPro ? config.api_key : 'PRO FEATURE LOCKED'"></span></span><button @click="isPro ? rotateApiKey() : triggerUpgrade('Unlock API Nexus')" class="text-[10px] text-primary-400 hover:text-white transition uppercase font-bold"><i class="bi" :class="isPro ? 'bi-arrow-repeat' : 'bi-lock-fill'"></i> Regenerate</button></div><div class="p-4 bg-slate-900/50 rounded-xl border border-white/5"><p class="text-xs text-slate-400 mb-2">Automation URL (Cron Job):</p><code class="block w-full p-2 bg-black/30 text-accent-400 text-xs break-all rounded cursor-pointer select-all font-mono" x-text="config.cron_url">Loading...</code></div></div></div>
+                    <div><h3 class="text-xl font-semibold text-white mb-4 border-b border-white/5 pb-2">Login History</h3><div class="bg-black/20 rounded-xl p-4 text-xs font-mono h-32 overflow-y-auto"><template x-for="l in loginLogs"><div class="flex justify-between py-1 border-b border-white/5"><span class="text-slate-300" x-text="l.timestamp"></span><span class="text-primary-400" x-text="l.ip"></span></div></template></div></div>
                     <div>
                         <h3 class="text-xl font-semibold text-white mb-6 border-b border-white/5 pb-4">Maintenance & Account</h3>
-                        <div class="flex justify-between items-center mb-6"><button @click="isPro ? exportData() : triggerUpgrade('Unlock JSON Backups')" class="text-sm text-primary-400 hover:text-primary-300 transition flex items-center gap-1"><i class="bi" :class="isPro ? 'bi-cloud-download' : 'bi-lock-fill'"></i> Backup Data</button><button @click="optimizeDb()" class="text-sm text-green-400 hover:text-green-300 underline transition" x-text="optBtnText">Clean & Compact DB</button></div>
+                        <div class="flex justify-between items-center mb-6"><button @click="isPro ? exportData() : triggerUpgrade('Unlock JSON Backups')" class="text-sm text-primary-400 hover:text-primary-300 transition flex items-center gap-1"><i class="bi" :class="isPro ? 'bi-cloud-download' : 'bi-lock-fill'"></i> Download Data Backup</button><button @click="optimizeDb()" class="text-sm text-green-400 hover:text-green-300 underline transition" x-text="optBtnText">Clean & Compact Database</button></div>
                         <div class="bg-white/5 p-4 rounded-xl border border-white/5 space-y-3"><h4 class="text-sm font-bold text-white">Change Master Password</h4><div class="grid grid-cols-2 gap-3"><input type="password" x-model="passChange.old" class="glass-input px-3 py-2 rounded text-sm" placeholder="Current Password"><input type="password" x-model="passChange.new" class="glass-input px-3 py-2 rounded text-sm" placeholder="New Password"></div><div class="flex justify-end"><button @click="changePassword()" class="px-6 py-2 border border-white/10 hover:bg-white/5 text-slate-300 rounded-lg text-sm font-medium transition">Update Password</button></div></div>
                     </div>
                 </div>
@@ -645,8 +647,8 @@ class EliteSMTP {
                     
                     <div class="flex items-center justify-center gap-2 mb-4 mt-6">
                         <input type="checkbox" x-model="validateMx" id="vmx" class="accent-primary-500" :disabled="!isPro" @click="if(!isPro) { $event.preventDefault(); triggerUpgrade('Unlock Live MX Validation'); }">
-                        <label for="vmx" class="text-sm flex items-center gap-1" :class="isPro ? 'text-slate-400' : 'text-slate-600'"><i class="bi" :class="isPro ? '' : 'bi-lock-fill'"></i> Validate MX</label>
-                        <span class="text-[10px] text-slate-500 block ml-1">Checks DNS</span>
+                        <label for="vmx" class="text-sm flex items-center gap-1" :class="isPro ? 'text-slate-400' : 'text-slate-600'"><i class="bi" :class="isPro ? '' : 'bi-lock-fill'"></i> Validate Email Domains (MX)</label>
+                        <span class="text-[10px] text-slate-500 block ml-1">Prevents bounces</span>
                     </div>
                     <button @click="addToQueue()" class="px-8 py-3 bg-primary-600 text-white rounded-full font-medium shadow-lg hover:bg-primary-500 transition">Import to Queue</button>
                 </div>
@@ -662,19 +664,40 @@ class EliteSMTP {
                 passChange: { old: '', new: '' }, authState: { auth: false, setup: false, recovery: false, csrf: '' }, validateMx: false, spamScore: 0, importMode: 'text', showPreview: false, lastLogin: 'Never',
                 stats: { total: 0, pending: 0, sent: 0, failed: 0, read: 0, unsubs: 0, clicks: 0 }, logs: [], campaigns: [], profiles: [], loginLogs: [], attachments: [], imap: { host: '', port: '993', user: '', pass: '' }, vips: [],
                 compose: { subject: 'Welcome {name}!', body: '<h1>Hi {name},</h1><p>Thanks.</p><br><p style="font-size:10px;color:gray;">{unsubscribe}</p>' }, recipientInput: '', 
-                config: { cron_url: '', api_url: '', api_key: '' }, toasts: [], optBtnText: 'Clean & Compact DB', authBtnText: 'Initialize',
+                config: { cron_url: '', api_url: '', api_key: '' }, toasts: [], optBtnText: 'Clean Database', authBtnText: 'Initialize',
                 showAddSmtp: false, newSmtp: { host: '', port: '587', user: '', pass: '', from_email: '', from_name: '', reply_to: '', bimi_url: '' },
                 
                 isPro: false, licenseKey: '', licensePlan: '', showUpgradeModal: false, upgradeTitle: 'Unlock Pro Features',
                 
                 triggerUpgrade(title) { this.upgradeTitle = title; this.showUpgradeModal = true; },
                 async init() { await this.checkAuth(); },
-                async checkAuth() { const res = await this.api('check_auth'); if(res?.is_auth === false) { this.authState.auth = false; } this.authState = { setup: res.is_setup, auth: res.is_auth, recovery: res.recovery_mode, csrf: res.csrf }; this.authBtnText = this.authState.recovery ? 'Reset Password' : (this.authState.setup ? 'Unlock' : 'Initialize'); this.isPro = res?.is_pro || false; this.licenseKey = res?.license_key || ''; this.licensePlan = res?.license_plan || ''; if (this.authState.auth) this.loadSystem(); },
+                async checkAuth() { 
+                    const res = await this.api('check_auth'); 
+                    if(res?.is_auth === false) { this.authState.auth = false; } 
+                    this.authState = { setup: res.is_setup, auth: res.is_auth, recovery: res.recovery_mode, csrf: res.csrf }; 
+                    this.authBtnText = this.authState.recovery ? 'Reset Password' : (this.authState.setup ? 'Unlock' : 'Initialize'); 
+                    this.isPro = res?.is_pro || false; 
+                    // FIX: Cryptographic License Masking for UI
+                    this.licenseKey = res?.license_key ? res.license_key.substring(0, 9) + '****-****-****' : ''; 
+                    this.licensePlan = res?.license_plan || ''; 
+                    if (this.authState.auth) this.loadSystem(); 
+                },
                 async performAuth() { this.authBtnText = "Authenticating..."; const action = this.authState.recovery ? 'reset_password' : (this.authState.setup ? 'login' : 'setup'); const res = await this.api(action, { password: this.authInput, username: this.hpInput }); if (res?.status === 'success') { this.authBtnText = "Success!"; setTimeout(() => { this.authInput = ''; this.authState.auth = true; this.authState.setup = true; this.authState.recovery = false; this.loadSystem(); }, 500); } else { this.notify(res?.msg || 'Invalid Password', 'error'); this.authBtnText = "Unlock"; } },
                 loadSystem() { this.fetchStats(); this.loadConfig(); this.fetchCampaigns(); this.notify('Welcome back, Commander.', 'success'); },
                 notify(msg, type = 'success') { const id = Date.now(); this.toasts.push({ id, msg, type, show: true }); setTimeout(() => { this.toasts = this.toasts.filter(t => t.id !== id); }, 3000); },
                 async api(action, data = {}) { this.loading = true; try { const res = await fetch('', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action, csrf: this.authState.csrf, ...data }) }); if (res.status === 401) { this.authState.auth = false; return null; } if (res.status === 403) { const err = await res.json(); this.notify(err.msg, 'error'); this.checkAuth(); return null; } return await res.json(); } catch (e) { this.notify(e.message, 'error'); return null; } finally { this.loading = false; } },
-                sendNow() { if (this.stats.pending === 0) { if(confirm('Queue empty. Import recipients?')) this.activeTab = 'recipients'; return; } if(confirm('Start sending immediately?')) { this.activeTab = 'dashboard'; this.processQueue(); } },
+                sendNow() { 
+                    // FIX: Smart Redirect if no SMTP is configured
+                    if (this.profiles.length === 0) {
+                        if(confirm('No Email Server (SMTP) configured. Add one now?')) { this.activeTab = 'settings'; this.showAddSmtp = true; }
+                        return;
+                    }
+                    if (this.stats.pending === 0) { 
+                        if(confirm('Queue empty. Import recipients?')) this.activeTab = 'recipients'; 
+                        return; 
+                    } 
+                    if(confirm('Start sending immediately?')) { this.activeTab = 'dashboard'; this.processQueue(); } 
+                },
                 async saveCampaign() { const res = await this.api('save_campaign', { subject: this.compose.subject, body: this.compose.body }); if (res?.status === 'success') { this.notify('Draft Saved', 'success'); this.fetchCampaigns(); } },
                 async saveDraft() { await this.api('save_template', { subject: this.compose.subject, body: this.compose.body }); },
                 async fetchCampaigns() { const res = await this.api('get_campaigns'); if (res?.status === 'success') this.campaigns = res.data; },
@@ -685,8 +708,8 @@ class EliteSMTP {
                 async loadConfig() { if (!this.authState.auth) return; const res = await this.api('get_config'); if (res?.status === 'success') { this.config.cron_url = res.data.cron_url; this.config.api_url = res.data.api_url; this.config.api_key = res.data.api_key; this.profiles = res.profiles; this.loginLogs = res.login_logs; if(res.imap) this.imap = res.imap; if(this.loginLogs.length > 0) this.lastLogin = this.loginLogs[0].timestamp; } },
                 async testSmtp(id) { const to = prompt("Enter email address to receive test:"); if (!to) return; this.notify('Sending Test...', 'success'); const res = await this.api('test_smtp_profile', { id: id, to: to }); if (res?.status === 'success') this.notify(res.msg, 'success'); else this.notify(res.msg, 'error'); },
                 async addSmtp() { const res = await this.api('add_smtp', this.newSmtp); if (res?.status === 'success') { this.showAddSmtp = false; this.loadConfig(); this.newSmtp = { host: '', port: '587', user: '', pass: '', from_email: '', from_name: '', reply_to: '', bimi_url: '' }; this.notify('Account Added', 'success'); } else { this.notify(res.msg, 'error'); } },
-                async deleteSmtp(id) { if(confirm('Remove account?')) { await this.api('delete_smtp', {id}); this.loadConfig(); this.notify('Account Removed', 'success'); } },
-                async saveImap() { const res = await this.api('save_imap', this.imap); if(res?.status === 'success') this.notify('IMAP Saved', 'success'); },
+                async deleteSmtp(id) { if(confirm('Remove server?')) { await this.api('delete_smtp', {id}); this.loadConfig(); this.notify('Server Removed', 'success'); } },
+                async saveImap() { const res = await this.api('save_imap', this.imap); if(res?.status === 'success') this.notify('Settings Saved', 'success'); },
                 async activateLicense() { if(!this.licenseKey) return; const res = await this.api('activate_license', { key: this.licenseKey }); if(res?.status === 'success') { this.notify('License Verified & Locked!', 'success'); this.checkAuth(); } else { this.notify(res.msg, 'error'); } },
                 async rotateApiKey() { if(confirm('Generate new API key? Old key will fail.')) { const res = await this.api('rotate_api_key'); if(res?.status === 'success') { this.loadConfig(); this.notify('Key Rotated', 'success'); } } },
                 async resendNonOpeners() { if(confirm('Resend to non-openers? This will reset their status to pending.')) { const res = await this.api('resend_non_openers'); if(res?.status==='success') { this.notify('Resend Queued', 'success'); this.fetchStats(); } } },
@@ -694,13 +717,13 @@ class EliteSMTP {
                 handleAttachments(e) { const files = e.target.files; if(files.length === 0) return; let totalSize = 0; Array.from(files).forEach(f => totalSize += f.size); if (totalSize > 5 * 1024 * 1024) { this.notify('Total limit 5MB', 'error'); e.target.value = ''; return; } Array.from(files).forEach(file => { const reader = new FileReader(); reader.onload = (evt) => { this.attachments.push({ name: file.name, type: file.type, data: evt.target.result }); }; reader.readAsDataURL(file); }); this.notify('Files Attached', 'success'); },
                 handleCsv(e) { const file = e.target.files[0]; if(!file) return; const reader = new FileReader(); reader.onload = (evt) => { const text = evt.target.result; const lines = text.split('\n'); let parsed = ''; lines.forEach((line, idx) => { if(idx === 0 && line.toLowerCase().includes('email')) return; const cols = line.split(','); if(cols.length >= 1) { const email = cols[0].trim(); const name = cols[1] ? cols[1].trim() : ''; if(email) parsed += `${email}, ${name}\n`; } }); this.recipientInput += parsed; this.notify('CSV Parsed', 'success'); this.importMode = 'text'; }; reader.readAsText(file); },
                 async exportData() { const res = await this.api('export_data'); if(res?.status === 'success') { const blob = new Blob([res.data], {type: 'application/json'}); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'elite_backup.json'; a.click(); this.notify('Download Started', 'success'); } },
-                async optimizeDb() { this.optBtnText = "Cleaning..."; const res = await this.api('optimize_db'); if(res?.status === 'success') { this.notify('Database Optimized', 'success'); this.optBtnText = "Done!"; setTimeout(() => { this.optBtnText = "Clean & Compact DB"; }, 2000); } },
+                async optimizeDb() { this.optBtnText = "Cleaning..."; const res = await this.api('optimize_db'); if(res?.status === 'success') { this.notify('Database Optimized', 'success'); this.optBtnText = "Done!"; setTimeout(() => { this.optBtnText = "Clean Database"; }, 2000); } },
                 async addToQueue() { if (!this.recipientInput) return; const res = await this.api('add_queue', { recipients: this.recipientInput, validate_mx: this.validateMx }); if (res?.status === 'success') { this.notify(`Added ${res.count} Emails`, 'success'); this.recipientInput = ''; this.fetchStats(); } },
-                async clearQueue() { if(!confirm('Reset?')) return; await this.api('clear_queue'); this.fetchStats(); this.notify('Queue Cleared', 'success'); },
-                async retryFailed() { if(!confirm('Retry all failed?')) return; await this.api('retry_failed'); this.fetchStats(); this.notify('Retrying...', 'success'); },
+                async clearQueue() { if(!confirm('Clear the sending queue?')) return; await this.api('clear_queue'); this.fetchStats(); this.notify('Queue Cleared', 'success'); },
+                async retryFailed() { if(!confirm('Retry all failed emails?')) return; await this.api('retry_failed'); this.fetchStats(); this.notify('Retrying...', 'success'); },
                 getPreview() { return this.showPreview ? this.compose.body.replace('{name}', 'John Doe').replace('{email}', 'john@example.com') : (this.compose.body || '<div class=\'flex h-full items-center justify-center text-gray-300\'>Live Preview</div>'); },
                 async processQueue() {
-                    this.isProcessing = true; this.log('info', `Turbo Engine: ${this.threads}x Threads`);
+                    this.isProcessing = true; this.log('info', `Engine Started: ${this.threads}x Threads`);
                     const processBatch = async () => {
                         if (!this.isProcessing || this.stats.pending <= 0) return;
                         const res = await this.api('process_batch', { limit: this.batchSize, subject: this.compose.subject, body: this.compose.body, attachments: this.attachments });
